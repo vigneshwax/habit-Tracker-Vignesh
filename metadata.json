@@ -1,0 +1,6 @@
+{
+  "name": "Vignesh Habit Tracker",
+  "description": "A simple, clean, and reliable personal habit tracker with monthly grid view, streak calculation, monthly reflections, and Supabase cloud persistence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

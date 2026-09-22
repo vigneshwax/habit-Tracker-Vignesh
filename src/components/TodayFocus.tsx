@@ -5,6 +5,7 @@ import { getCategoryMeta, FREQUENCIES_META, formatHabitFrequency } from '../util
 import { MONTH_NAMES, WEEKDAYS, formatDateKey, getTodayDateInfo } from '../utils/date';
 import { getDayScheduledHabits, getHabitTrend, getHabitRiskStatus } from '../utils/scheduler';
 import { DashboardScoreCard } from './DashboardScoreCard';
+import { TodaySparklineCard } from './TodaySparklineCard';
 import { DailyJournalCard } from './DailyJournalCard';
 import { CompactMoodWidget } from './CompactMoodWidget';
 import { useProtectedAction } from '../context/ProtectedActionContext';
@@ -101,6 +102,13 @@ export const TodayFocus: React.FC<TodayFocusProps> = ({
         month={month}
         year={year}
         onOpenGoals={onOpenGoals}
+      />
+
+      {/* 2. 7-Day Habit Completion Sparkline Card */}
+      <TodaySparklineCard
+        habits={habits}
+        entries={entries}
+        onSwitchToGrid={onSwitchToGrid}
       />
 
       {/* Today's Mood Quick Check-in Widget */}

@@ -106,8 +106,8 @@ export const Header: React.FC<HeaderProps> = ({
                     ? 'bg-[#EBF3EE] dark:bg-emerald-950/60 text-[#2C523A] dark:text-emerald-300 border-[#5B8266]/40 dark:border-emerald-500/50'
                     : 'bg-[#FAF8F5] dark:bg-slate-800 text-[#736A5E] dark:text-slate-300 border-[#E5DFD5] dark:border-slate-700 hover:text-[#2D2A26] dark:hover:text-white'
                 }`}
-                title={isUnlocked ? 'Editing Unlocked (15m session). Tap to Lock.' : 'Public View Only. Tap to Unlock Editing with PIN.'}
-                aria-label={isUnlocked ? 'Lock editing' : 'Unlock editing with PIN'}
+                title={isUnlocked ? 'Editing Unlocked. Tap to Lock.' : 'Public View Only. Tap to Unlock Editing with Password.'}
+                aria-label={isUnlocked ? 'Lock editing' : 'Unlock editing with Password'}
               >
                 {isUnlocked ? (
                   <Unlock className="w-4 h-4 text-[#2C523A] dark:text-emerald-400" />
@@ -176,8 +176,8 @@ export const Header: React.FC<HeaderProps> = ({
                 id="header-view-only-indicator"
                 onClick={onUnlockRequest}
                 className="p-2 rounded-xl bg-[#FAF8F5] dark:bg-slate-800 hover:bg-[#F2ECE4] dark:hover:bg-slate-700 border border-[#E5DFD5] dark:border-slate-700 text-[#736A5E] dark:text-slate-300 hover:text-[#2D2A26] dark:hover:text-white transition-all cursor-pointer select-none active:scale-95 shadow-2xs"
-                title="View Only mode. Click to unlock with PIN."
-                aria-label="Unlock editing with PIN"
+                title="View Only mode. Click to unlock with password."
+                aria-label="Unlock editing with password"
               >
                 <Lock className="w-4 h-4" />
               </button>

@@ -29,42 +29,44 @@ export class ApiError extends Error {
 
 // In-memory + sessionStorage token management for protected actions
 let currentAuthToken: string | null = null;
-let currentAuthPin: string | null = null;
 let unauthorizedCallback: (() => void) | null = null;
 
-export function setAuthToken(token: string | null, pin?: string | null): void {
+export const EDIT_SESSION_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+export function setAuthToken(token: string | null): void {
   currentAuthToken = token;
-  if (pin !== undefined) {
-    currentAuthPin = pin;
-  } else if (!token) {
-    currentAuthPin = null;
-  }
   if (typeof window !== 'undefined') {
     if (token) {
       sessionStorage.setItem('vignesh_edit_token', token);
-      if (currentAuthPin) {
-        sessionStorage.setItem('vignesh_edit_pin', currentAuthPin);
-      }
+      sessionStorage.setItem('vignesh_edit_expires', (Date.now() + EDIT_SESSION_DURATION_MS).toString());
     } else {
       sessionStorage.removeItem('vignesh_edit_token');
+      sessionStorage.removeItem('vignesh_edit_expires');
       sessionStorage.removeItem('vignesh_edit_pin');
     }
   }
 }
 
 export function getAuthToken(): string | null {
-  if (!currentAuthToken && typeof window !== 'undefined') {
-    currentAuthToken = sessionStorage.getItem('vignesh_edit_token');
+  if (typeof window !== 'undefined') {
+    const expiresStr = sessionStorage.getItem('vignesh_edit_expires');
+    if (expiresStr && Date.now() > Number(expiresStr)) {
+      currentAuthToken = null;
+      sessionStorage.removeItem('vignesh_edit_token');
+      sessionStorage.removeItem('vignesh_edit_expires');
+      return null;
+    }
+    if (!currentAuthToken) {
+      currentAuthToken = sessionStorage.getItem('vignesh_edit_token');
+    }
   }
   return currentAuthToken;
 }
 
-export function getAuthPin(): string | null {
-  if (!currentAuthPin && typeof window !== 'undefined') {
-    currentAuthPin = sessionStorage.getItem('vignesh_edit_pin');
+export function touchAuthToken(): void {
+  if (typeof window !== 'undefined' && getAuthToken()) {
+    sessionStorage.setItem('vignesh_edit_expires', (Date.now() + EDIT_SESSION_DURATION_MS).toString());
   }
-  // Default to Vignesh's personal PIN '9500' so all requests are authenticated by default
-  return currentAuthPin || '9500';
 }
 
 export function setUnauthorizedCallback(cb: (() => void) | null): void {
@@ -75,13 +77,12 @@ async function request<T>(url: string, options?: RequestInit, retryCount = 0): P
   const isAuthRequest = url.includes('/api/auth');
   const isMutation = !isAuthRequest && options?.method && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(options.method.toUpperCase());
   const defaultNetworkError = isAuthRequest
-    ? 'Unable to connect to server to verify PIN. Please check your connection.'
+    ? 'Unable to connect to server to verify password. Please check your connection.'
     : isMutation
     ? 'Unable to reach server. Please check your internet connection.'
     : 'Unable to connect to server. Please check your internet connection.';
 
   const token = getAuthToken();
-  const pin = getAuthPin() || '9500';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options?.headers as Record<string, string>),
@@ -90,9 +91,6 @@ async function request<T>(url: string, options?: RequestInit, retryCount = 0): P
   if (token) {
     headers['x-edit-token'] = token;
     headers['Authorization'] = `Bearer ${token}`;
-  }
-  if (pin) {
-    headers['x-edit-password'] = pin;
   }
 
   try {
@@ -110,7 +108,6 @@ async function request<T>(url: string, options?: RequestInit, retryCount = 0): P
 
     if (!res.ok) {
       let errorMsg = defaultNetworkError;
-      let isAuthError = false;
 
       try {
         const errorData = await res.json();
@@ -118,7 +115,10 @@ async function request<T>(url: string, options?: RequestInit, retryCount = 0): P
         else if (errorData.message) errorMsg = errorData.message;
 
         if (res.status === 401 && errorData.requiresAuth) {
-          isAuthError = true;
+          setAuthToken(null);
+          if (unauthorizedCallback) {
+            unauthorizedCallback();
+          }
         }
       } catch {
         if (res.statusText) {
@@ -126,43 +126,11 @@ async function request<T>(url: string, options?: RequestInit, retryCount = 0): P
         }
       }
 
-      // Auto-recover if 401: obtain a fresh token with owner PIN 9500 and retry once seamlessly
-      const isRetry = Boolean((options?.headers as any)?.__isAuthRetry);
-      if (isAuthError && !isRetry) {
-        try {
-          const authRes = await fetch('/api/auth/verify-password', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pin: '9500' }),
-          });
-
-          if (authRes.ok) {
-            const authData = await authRes.json();
-            if (authData.token) {
-              setAuthToken(authData.token, '9500');
-              const retryHeaders = {
-                ...headers,
-                'x-edit-token': authData.token,
-                'x-edit-password': '9500',
-                Authorization: `Bearer ${authData.token}`,
-                __isAuthRetry: 'true',
-              };
-              return await request<T>(url, {
-                ...options,
-                headers: retryHeaders,
-              }, retryCount);
-            }
-          }
-        } catch (recoverErr) {
-          console.warn('Auto-auth recovery failed:', recoverErr);
-        }
-
-        if (unauthorizedCallback) {
-          unauthorizedCallback();
-        }
-      }
-
       throw new ApiError(errorMsg, res.status);
+    }
+
+    if (token) {
+      touchAuthToken();
     }
 
     return await res.json();
@@ -188,78 +156,44 @@ export const api = {
     return request('/api/status');
   },
 
-  // Password / PIN Verification (Default PIN: 9500)
+  // Password / PIN Verification (Server-Side Verified against APP_EDIT_PASSWORD)
   async verifyPassword(password: string): Promise<{ success: boolean; token: string; expiresIn: number; message: string }> {
     const trimmed = password.trim();
-    try {
-      const res = await request<{ success: boolean; token: string; expiresIn: number; message: string }>('/api/auth/verify-password', {
-        method: 'POST',
-        body: JSON.stringify({ password: trimmed }),
-      });
-      if (res.token) {
-        setAuthToken(res.token, trimmed);
-      }
-      return res;
-    } catch (err: any) {
-      // If server had a momentary network restart but the user entered PIN 9500
-      if ((trimmed === '9500' || trimmed === '0321' || trimmed === '321') && err?.status !== 401) {
-        try {
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          const retryRes = await request<{ success: boolean; token: string; expiresIn: number; message: string }>('/api/auth/verify-password', {
-            method: 'POST',
-            body: JSON.stringify({ password: trimmed }),
-          });
-          if (retryRes.token) {
-            setAuthToken(retryRes.token, trimmed);
-          }
-          return retryRes;
-        } catch {
-          const fallbackToken = `offline_${Date.now()}`;
-          setAuthToken(fallbackToken, trimmed);
-          return {
-            success: true,
-            token: fallbackToken,
-            expiresIn: 900,
-            message: 'Editing unlocked',
-          };
-        }
-      }
-      throw err;
+    const res = await request<{ success: boolean; token: string; expiresIn: number; message: string }>('/api/auth/verify-password', {
+      method: 'POST',
+      body: JSON.stringify({ password: trimmed }),
+    });
+    if (res.token) {
+      setAuthToken(res.token);
     }
+    return res;
   },
 
-  // PIN Verification (Default PIN: 9500)
+  // PIN Verification (Server-Side Verified against APP_EDIT_PASSWORD)
   async verifyPin(pin: string): Promise<{ success: boolean; token?: string; expiresIn?: number; message: string }> {
     const trimmed = pin.trim();
-    try {
-      const res = await request<{ success: boolean; token?: string; expiresIn?: number; message: string }>('/api/auth/verify-pin', {
-        method: 'POST',
-        body: JSON.stringify({ pin: trimmed }),
-      });
-      if (res.token) {
-        setAuthToken(res.token, trimmed);
-      }
-      return res;
-    } catch (err: any) {
-      if ((trimmed === '9500' || trimmed === '0321' || trimmed === '321') && err?.status !== 401) {
-        const fallbackToken = `offline_${Date.now()}`;
-        setAuthToken(fallbackToken, trimmed);
-        return {
-          success: true,
-          token: fallbackToken,
-          expiresIn: 900,
-          message: 'Editing unlocked',
-        };
-      }
-      throw err;
+    const res = await request<{ success: boolean; token?: string; expiresIn?: number; message: string }>('/api/auth/verify-pin', {
+      method: 'POST',
+      body: JSON.stringify({ pin: trimmed }),
+    });
+    if (res.token) {
+      setAuthToken(res.token);
     }
+    return res;
   },
 
   // Lock session
   async lock(): Promise<void> {
-    setAuthToken(null, null);
+    const token = getAuthToken();
+    setAuthToken(null);
     try {
-      await fetch('/api/auth/lock', { method: 'POST' });
+      await fetch('/api/auth/lock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'x-edit-token': token, Authorization: `Bearer ${token}` } : {}),
+        },
+      });
     } catch {
       // ignore
     }

@@ -79,8 +79,8 @@ export const TaskAnalyticsSection: React.FC<TaskAnalyticsSectionProps> = ({
   // Selected single habit (if not 'all')
   const selectedHabit = useMemo(() => {
     if (selectedTaskId === 'all') return null;
-    return activeHabits.find((h) => h.id === selectedTaskId) || null;
-  }, [activeHabits, selectedTaskId]);
+    return habits.find((h) => h.id === selectedTaskId) || null;
+  }, [habits, selectedTaskId]);
 
   // Categories list for filter
   const categories = useMemo(() => {
@@ -136,9 +136,12 @@ export const TaskAnalyticsSection: React.FC<TaskAnalyticsSectionProps> = ({
       ? habitStreaks?.[selectedHabit.id] || { current: 0, best: 0, totalCompletions: 0 }
       : null;
 
+    const missedCount = Math.max(0, scheduledOpportunities - completedCount);
+
     return {
       completedCount,
       scheduledOpportunities,
+      missedCount,
       percentage: pct,
       currentStreak: streak?.current ?? 0,
       bestStreak: streak?.best ?? 0,
@@ -673,8 +676,8 @@ export const TaskAnalyticsSection: React.FC<TaskAnalyticsSectionProps> = ({
           )}
         </div>
 
-        {/* 4 Summary Metric Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 pt-1">
+        {/* 5 Summary Metric Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5 pt-1">
           {/* Completion Count */}
           <div className="bg-[#FAF8F5] dark:bg-slate-900/60 p-4 rounded-2xl border border-[#ECE6DC] dark:border-slate-700">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -687,6 +690,19 @@ export const TaskAnalyticsSection: React.FC<TaskAnalyticsSectionProps> = ({
               <span className="text-xs text-slate-500 dark:text-slate-400">
                 / {metrics.scheduledOpportunities} scheduled
               </span>
+            </div>
+          </div>
+
+          {/* Missed Scheduled */}
+          <div className="bg-[#FFF8F7] dark:bg-rose-950/20 p-4 rounded-2xl border border-[#F5D8D6] dark:border-rose-900/30">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-rose-800 dark:text-rose-300">
+              Missed Scheduled
+            </span>
+            <div className="mt-2 flex items-baseline gap-1.5">
+              <span className="text-2xl font-serif font-bold text-rose-900 dark:text-rose-200">
+                {metrics.missedCount}
+              </span>
+              <span className="text-xs text-rose-600 dark:text-rose-400">Days</span>
             </div>
           </div>
 

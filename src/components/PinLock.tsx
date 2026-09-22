@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Lock, Delete, ArrowRight, CheckCircle2, AlertCircle, X, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { api } from '../api';
 
 interface PinLockProps {
   onUnlock: () => void;
@@ -43,16 +44,21 @@ export const PinLock: React.FC<PinLockProps> = ({
     setError(null);
   };
 
-  const verify = (code: string) => {
-    if (code === '9500' || code === '0321' || code === '321') {
-      setIsSuccess(true);
-      setError(null);
-      setTimeout(() => {
-        onUnlock();
-      }, 350);
-    } else {
+  const verify = async (code: string) => {
+    try {
+      const res = await api.verifyPassword(code);
+      if (res.success) {
+        setIsSuccess(true);
+        setError(null);
+        setTimeout(() => {
+          onUnlock();
+        }, 350);
+      } else {
+        throw new Error();
+      }
+    } catch {
       setIsShaking(true);
-      setError('Incorrect PIN');
+      setError('Incorrect password');
       setTimeout(() => {
         setIsShaking(false);
         setPin('');
@@ -215,11 +221,6 @@ export const PinLock: React.FC<PinLockProps> = ({
             );
           })}
         </div>
-
-        {/* Subtle Hint */}
-        <p className="text-[11px] text-[#A69E92] dark:text-slate-500 mt-6 text-center">
-          Default 4-digit PIN: <span className="font-mono font-medium text-[#7D766C] dark:text-slate-300">9500</span>
-        </p>
 
         {/* Visitor View-Only Option */}
         {onVisitorAccess && (

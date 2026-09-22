@@ -16,11 +16,9 @@ const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity
 
 export const ProtectedActionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    // Vignesh is the sole user and owner of this habit tracker:
-    // It starts unlocked by default so all creates, updates, and edits save directly to Supabase cloud.
-    const isExplicitlyLocked = sessionStorage.getItem('vignesh_habit_locked') === 'true';
-    return !isExplicitlyLocked;
+    if (typeof window === 'undefined') return false;
+    const token = getAuthToken();
+    return Boolean(token);
   });
 
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -29,28 +27,57 @@ export const ProtectedActionProvider: React.FC<{ children: React.ReactNode }> = 
 
   const lock = useCallback(() => {
     setIsUnlocked(false);
-    sessionStorage.setItem('vignesh_habit_locked', 'true');
     setAuthToken(null);
     api.lock();
   }, []);
 
   const unlock = useCallback(() => {
     setIsUnlocked(true);
-    sessionStorage.removeItem('vignesh_habit_locked');
-    setAuthToken(getAuthToken() || 'vignesh_owner_token', '9500');
   }, []);
 
-  // Listen for backend 401 unauthorized errors (only when explicitly locked)
+  // Listen for backend 401 unauthorized errors
   useEffect(() => {
     setUnauthorizedCallback(() => {
       setIsUnlocked(false);
-      sessionStorage.setItem('vignesh_habit_locked', 'true');
       setAuthToken(null);
     });
     return () => {
       setUnauthorizedCallback(null);
     };
   }, []);
+
+  // 15-minute inactivity auto-lock timer
+  useEffect(() => {
+    if (!isUnlocked) return;
+
+    let timer: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        console.log('[Auth] 15-minute inactivity timeout reached. Locking editor.');
+        lock();
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+
+    resetTimer();
+
+    const activityEvents = ['mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    const handleActivity = () => {
+      resetTimer();
+    };
+
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, handleActivity, { passive: true });
+    });
+
+    return () => {
+      clearTimeout(timer);
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, handleActivity);
+      });
+    };
+  }, [isUnlocked, lock]);
 
   // Execute a protected action
   const executeProtected = useCallback(

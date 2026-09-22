@@ -5,6 +5,6 @@ Whenever you make any change, feature addition, UI modification, or schema updat
 
 ## App Context & Architecture
 - **App Name**: Vignesh Habit Tracker
-- **PIN Code**: `9500` (4-digit personal access gate)
+- **Authentication**: Single source of truth password gate validated server-side against `APP_EDIT_PASSWORD` (editing requires password, viewing is public).
 - **Database**: Supabase PostgreSQL (default linked cloud database with UUID primary keys on `habits`, `habit_entries`, and `reflections`)
 - **Backend**: Express + Vite proxy in `server.ts` to keep credentials hidden and validate UUIDs.

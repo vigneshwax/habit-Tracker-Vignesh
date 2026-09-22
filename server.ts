@@ -398,22 +398,32 @@ let supabaseClient: SupabaseClient | null = null;
 let supabaseChecked = false;
 let isSupabaseConnected = false;
 
+// ----------------------------------------------------
+// ENVIRONMENT VARIABLE VALIDATION (At Server Startup)
+// ----------------------------------------------------
+function validateEnvironmentVariables() {
+  const missing: string[] = [];
+  if (!process.env.SUPABASE_URL) missing.push('SUPABASE_URL');
+  if (!process.env.SUPABASE_ANON_KEY) missing.push('SUPABASE_ANON_KEY');
+  if (!process.env.APP_EDIT_PASSWORD) missing.push('APP_EDIT_PASSWORD');
+
+  if (missing.length > 0) {
+    console.error(`[Configuration Error] Missing required environment variable(s): ${missing.join(', ')}.`);
+    console.error('Please configure these variables in your deployment / environment settings.');
+  } else {
+    console.log('[Configuration] Required environment variables (SUPABASE_URL, SUPABASE_ANON_KEY, APP_EDIT_PASSWORD) validated successfully.');
+  }
+}
+validateEnvironmentVariables();
+
 function getSupabase(): SupabaseClient | null {
   if (supabaseChecked) {
     return supabaseClient;
   }
   supabaseChecked = true;
 
-  const DEFAULT_SUPABASE_URL = 'https://xhkomruflzquyunhajpo.supabase.co';
-  const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_E44ScvoJpk-PMZS3Oqp8ZA_8EjrqBNP';
-
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    DEFAULT_SUPABASE_ANON_KEY;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
 
   if (url && key && url.startsWith('http')) {
     try {
@@ -428,7 +438,7 @@ function getSupabase(): SupabaseClient | null {
       isSupabaseConnected = false;
     }
   } else {
-    console.log('Supabase credentials not configured yet. Using reliable in-memory persistence.');
+    console.error('[Configuration Error] Supabase credentials (SUPABASE_URL and SUPABASE_ANON_KEY) are missing or invalid.');
   }
 
   return supabaseClient;
@@ -442,16 +452,21 @@ getSupabase();
 // ----------------------------------------------------
 
 // ----------------------------------------------------
-// EDIT PROTECTION & SESSION MANAGEMENT (4-Digit PIN: 9500)
+// EDIT PROTECTION & SESSION MANAGEMENT (APP_EDIT_PASSWORD)
 // ----------------------------------------------------
-const APP_EDIT_PASSWORD = process.env.APP_EDIT_PASSWORD || '9500';
-const ALLOWED_PINS = Array.from(new Set([APP_EDIT_PASSWORD, '9500', '0321', '321']));
+const APP_EDIT_PASSWORD = process.env.APP_EDIT_PASSWORD;
 const activeEditTokens = new Map<string, number>(); // token -> expiry timestamp (ms)
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours session lifetime
-let isExplicitlyLocked = false;
+const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes session lifetime
 
 function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
+}
+
+function verifyPasswordMatch(input: unknown): boolean {
+  if (!APP_EDIT_PASSWORD || typeof input !== 'string') {
+    return false;
+  }
+  return input.trim() === APP_EDIT_PASSWORD.trim();
 }
 
 function verifyAuthToken(req: Request): boolean {
@@ -459,8 +474,8 @@ function verifyAuthToken(req: Request): boolean {
   const authHeader = req.headers['authorization'];
   const passwordHeader = req.headers['x-edit-password'] as string | undefined;
 
-  // Direct password/PIN match (header fallback)
-  if (passwordHeader && ALLOWED_PINS.includes(passwordHeader.trim())) {
+  // Direct password match via header
+  if (passwordHeader && verifyPasswordMatch(passwordHeader)) {
     return true;
   }
 
@@ -472,12 +487,6 @@ function verifyAuthToken(req: Request): boolean {
       activeEditTokens.set(token, Date.now() + SESSION_TTL_MS);
       return true;
     }
-  }
-
-  // Vignesh is the sole user and owner of this habit tracker:
-  // Allow all mutations to save directly to Supabase cloud by default unless screen is explicitly locked.
-  if (!isExplicitlyLocked) {
-    return true;
   }
 
   return false;
@@ -503,7 +512,7 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   // Require valid password session token for all write/mutation operations
   if (!verifyAuthToken(req)) {
     return res.status(401).json({
-      error: 'Editing is locked. Please enter your 4-digit PIN (9500) to make changes.',
+      error: 'Editing is locked. Please enter your editing password to make changes.',
       requiresAuth: true,
     });
   }
@@ -544,11 +553,10 @@ app.get('/api/status', async (_req: Request, res: Response) => {
   });
 });
 
-// Password / 4-Digit PIN Verification (Default PIN: 9500)
+// Password / PIN Verification (Server-Side Verified against APP_EDIT_PASSWORD)
 app.post('/api/auth/verify-password', (req: Request, res: Response) => {
   const input = req.body.password ?? req.body.pin;
-  if (typeof input === 'string' && ALLOWED_PINS.includes(input.trim())) {
-    isExplicitlyLocked = false;
+  if (verifyPasswordMatch(input)) {
     const token = generateToken();
     activeEditTokens.set(token, Date.now() + SESSION_TTL_MS);
     return res.json({
@@ -558,14 +566,13 @@ app.post('/api/auth/verify-password', (req: Request, res: Response) => {
       message: 'Editing unlocked',
     });
   }
-  return res.status(401).json({ success: false, error: 'Incorrect 4-digit PIN' });
+  return res.status(401).json({ success: false, error: 'Incorrect editing password' });
 });
 
-// PIN Verification - kept for backward compatibility
+// PIN Verification - kept for backward compatibility with existing clients
 app.post('/api/auth/verify-pin', (req: Request, res: Response) => {
   const input = req.body.pin ?? req.body.password;
-  if (typeof input === 'string' && ALLOWED_PINS.includes(input.trim())) {
-    isExplicitlyLocked = false;
+  if (verifyPasswordMatch(input)) {
     const token = generateToken();
     activeEditTokens.set(token, Date.now() + SESSION_TTL_MS);
     return res.json({
@@ -575,7 +582,7 @@ app.post('/api/auth/verify-pin', (req: Request, res: Response) => {
       message: 'Editing unlocked',
     });
   }
-  return res.status(401).json({ success: false, error: 'Incorrect 4-digit PIN' });
+  return res.status(401).json({ success: false, error: 'Incorrect editing password' });
 });
 
 // Lock Session endpoint
@@ -586,7 +593,6 @@ app.post('/api/auth/lock', (req: Request, res: Response) => {
   if (token) {
     activeEditTokens.delete(token);
   }
-  isExplicitlyLocked = true;
   return res.json({ success: true, message: 'Editing locked' });
 });
 
@@ -1922,52 +1928,18 @@ app.get('/api/moods', async (req: Request, res: Response) => {
   if (sb) {
     try {
       const { data, error } = await sb.from('mood_tracker').select('*').order('date', { ascending: false });
-      if (!error && data && Array.isArray(data) && data.length > 0) {
-        for (const item of data) {
-          const idx = localDb.mood_tracker.findIndex((m) => m.id === item.id || m.date === item.date);
-          if (idx >= 0) localDb.mood_tracker[idx] = { ...localDb.mood_tracker[idx], ...item };
-          else localDb.mood_tracker.push(item);
-        }
-        const sorted = [...localDb.mood_tracker].sort((a, b) => b.date.localeCompare(a.date));
-        return res.json({ moods: sorted });
+      if (!error && Array.isArray(data)) {
+        return res.json({ moods: data });
       }
-
-      // If mood_tracker table has no entries in cloud, hydrate from daily_journal which records mood & energy
-      if (localDb.mood_tracker.length === 0) {
-        const { data: journalData } = await sb.from('daily_journal').select('*').order('date', { ascending: false });
-        if (journalData && Array.isArray(journalData)) {
-          const scoreMap: Record<string, number> = {
-            very_low: 1,
-            low: 2,
-            okay: 3,
-            good: 4,
-            great: 5,
-            excellent: 6,
-          };
-          for (const entry of journalData) {
-            if (entry.date && entry.mood) {
-              const safeMood = entry.mood;
-              const safeScore = scoreMap[safeMood] || 4;
-              localDb.mood_tracker.push({
-                id: entry.id || crypto.randomUUID(),
-                date: entry.date,
-                mood: safeMood,
-                mood_score: safeScore,
-                energy_level: entry.energy_level || 3,
-                note: entry.daily_win || '',
-                created_at: entry.created_at || new Date().toISOString(),
-                updated_at: entry.updated_at,
-              });
-            }
-          }
-        }
+      if (error) {
+        console.warn('[Supabase] Warning fetching moods from mood_tracker:', error.message);
       }
     } catch (err: any) {
-      // Graceful fallback
+      console.warn('[Supabase] Exception fetching moods from mood_tracker:', err?.message || err);
     }
   }
 
-  // Fallback to localDb (sorted reverse chronological)
+  // Fallback to localDb (sorted reverse chronological) if Supabase is offline
   const sorted = [...localDb.mood_tracker].sort((a, b) => b.date.localeCompare(a.date));
   return res.json({ moods: sorted });
 });
@@ -1992,11 +1964,11 @@ app.get('/api/moods/:id', async (req: Request, res: Response) => {
   return res.status(404).json({ error: 'Mood entry not found' });
 });
 
-// POST /api/moods - Insert or update mood entry for a specific date
+// POST /api/moods - Insert or update mood entry for a specific date (protected)
 app.post('/api/moods', async (req: Request, res: Response) => {
   let { date, mood, mood_score, energy_level, note } = req.body;
 
-  // Strict Date Validation
+  // Strict Date Validation (never null, never undefined, must be YYYY-MM-DD)
   if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return res.status(400).json({ error: 'Valid date (YYYY-MM-DD) is required.' });
   }
@@ -2035,47 +2007,34 @@ app.post('/api/moods', async (req: Request, res: Response) => {
   const sb = getSupabase();
   if (sb) {
     try {
-      // Check if mood for this date already exists to prevent duplicates
+      // Check if mood for this date already exists to prevent duplicate entries
       const { data: existing, error: findErr } = await sb
         .from('mood_tracker')
         .select('*')
         .eq('date', date)
         .maybeSingle();
 
-      if (!findErr && existing) {
+      if (findErr) {
+        console.warn('[Supabase] Warning searching mood_tracker by date:', findErr.message);
+      }
+
+      if (existing) {
         // Update existing record by ID
         const updatePayload = {
           ...payload,
           updated_at: new Date().toISOString(),
         };
         const updateRes = await resilientUpdate(sb, 'mood_tracker', existing.id, updatePayload);
+        if (updateRes.error) {
+          console.error('[Supabase] Error updating mood_tracker:', updateRes.error);
+          return res.status(500).json({ error: `Failed to update mood: ${updateRes.error.message || 'Database error'}` });
+        }
+
         const resultRecord = { ...existing, ...updatePayload, ...(updateRes.data || {}), id: existing.id, date };
 
         const lIdx = localDb.mood_tracker.findIndex((m) => m.date === date || m.id === existing.id);
         if (lIdx >= 0) localDb.mood_tracker[lIdx] = resultRecord;
         else localDb.mood_tracker.push(resultRecord);
-
-        // Also sync mood & energy into daily_journal in Supabase for durable persistence
-        try {
-          const { data: exDJ } = await sb.from('daily_journal').select('id').eq('date', date).maybeSingle();
-          if (exDJ) {
-            await sb.from('daily_journal').update({
-              mood: safeMood,
-              energy_level: safeEnergy,
-              updated_at: new Date().toISOString(),
-            }).eq('id', exDJ.id);
-          } else {
-            await sb.from('daily_journal').insert([{
-              id: crypto.randomUUID(),
-              date,
-              mood: safeMood,
-              energy_level: safeEnergy,
-              daily_win: safeNote || null,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }]);
-          }
-        } catch (_) {}
 
         return res.json({ mood: resultRecord, updated: true });
       } else {
@@ -2087,42 +2046,26 @@ app.post('/api/moods', async (req: Request, res: Response) => {
           updated_at: new Date().toISOString(),
         };
         const insertRes = await resilientInsert(sb, 'mood_tracker', newRecord);
+        if (insertRes.error) {
+          console.error('[Supabase] Error inserting into mood_tracker:', insertRes.error);
+          return res.status(500).json({ error: `Failed to insert mood: ${insertRes.error.message || 'Database error'}` });
+        }
+
         const resultRecord = { ...newRecord, ...(insertRes.data || {}), date };
 
         const lIdx = localDb.mood_tracker.findIndex((m) => m.date === date);
         if (lIdx >= 0) localDb.mood_tracker[lIdx] = resultRecord;
         else localDb.mood_tracker.push(resultRecord);
 
-        // Also sync mood & energy into daily_journal in Supabase for durable persistence
-        try {
-          const { data: exDJ } = await sb.from('daily_journal').select('id').eq('date', date).maybeSingle();
-          if (exDJ) {
-            await sb.from('daily_journal').update({
-              mood: safeMood,
-              energy_level: safeEnergy,
-              updated_at: new Date().toISOString(),
-            }).eq('id', exDJ.id);
-          } else {
-            await sb.from('daily_journal').insert([{
-              id: crypto.randomUUID(),
-              date,
-              mood: safeMood,
-              energy_level: safeEnergy,
-              daily_win: safeNote || null,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }]);
-          }
-        } catch (_) {}
-
         return res.json({ mood: resultRecord, created: true });
       }
     } catch (err: any) {
-      // Graceful fallback to local persistence
+      console.error('[Supabase] Exception in POST /api/moods:', err);
+      return res.status(500).json({ error: `Failed to save mood entry: ${err?.message || 'Database error'}` });
     }
   }
 
-  // Fallback to localDb
+  // Fallback to localDb if Supabase is offline
   const localIdx = localDb.mood_tracker.findIndex((m) => m.date === date);
   if (localIdx >= 0) {
     localDb.mood_tracker[localIdx] = {
@@ -2143,7 +2086,7 @@ app.post('/api/moods', async (req: Request, res: Response) => {
   }
 });
 
-// PUT /api/moods/:id - Update existing mood entry by ID
+// PUT /api/moods/:id - Update existing mood entry by ID (protected)
 app.put('/api/moods/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   let { date, mood, mood_score, energy_level, note } = req.body;
@@ -2187,6 +2130,10 @@ app.put('/api/moods/:id', async (req: Request, res: Response) => {
   if (sb) {
     try {
       const updateRes = await resilientUpdate(sb, 'mood_tracker', id, payload);
+      if (updateRes.error) {
+        console.error('[Supabase] Error updating mood_tracker:', updateRes.error);
+        return res.status(500).json({ error: `Failed to update mood: ${updateRes.error.message || 'Database error'}` });
+      }
       const updated = updateRes.data || { id, ...payload };
 
       const lIdx = localDb.mood_tracker.findIndex((m) => m.id === id);
@@ -2195,7 +2142,8 @@ app.put('/api/moods/:id', async (req: Request, res: Response) => {
 
       return res.json({ mood: updated });
     } catch (err: any) {
-      console.warn('[Supabase] Exception during mood_tracker update:', err?.message || err);
+      console.error('[Supabase] Exception during mood_tracker update:', err?.message || err);
+      return res.status(500).json({ error: `Failed to update mood entry: ${err?.message || 'Database error'}` });
     }
   }
 
@@ -2208,7 +2156,7 @@ app.put('/api/moods/:id', async (req: Request, res: Response) => {
   return res.status(404).json({ error: 'Mood entry not found' });
 });
 
-// DELETE /api/moods/:id - Delete mood entry by ID
+// DELETE /api/moods/:id - Delete mood entry by ID (protected)
 app.delete('/api/moods/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const sb = getSupabase();
@@ -2216,10 +2164,12 @@ app.delete('/api/moods/:id', async (req: Request, res: Response) => {
     try {
       const { error } = await sb.from('mood_tracker').delete().eq('id', id);
       if (error) {
-        console.warn('[Supabase] Warning deleting from mood_tracker:', error.message);
+        console.error('[Supabase] Error deleting from mood_tracker:', error.message);
+        return res.status(500).json({ error: `Failed to delete mood: ${error.message}` });
       }
     } catch (err: any) {
-      console.warn('[Supabase] Exception deleting from mood_tracker:', err?.message || err);
+      console.error('[Supabase] Exception deleting from mood_tracker:', err?.message || err);
+      return res.status(500).json({ error: `Failed to delete mood entry: ${err?.message || 'Database error'}` });
     }
   }
 

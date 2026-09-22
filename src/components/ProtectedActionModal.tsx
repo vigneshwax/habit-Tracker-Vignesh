@@ -10,8 +10,6 @@ interface ProtectedActionModalProps {
   actionDescription?: string;
 }
 
-const PIN_LENGTH = 4;
-
 export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
   isOpen,
   onClose,
@@ -50,17 +48,16 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
         setIsLoading(false);
         onSuccess();
       } else {
-        throw new Error(res.message || 'Incorrect 4-digit PIN');
+        throw new Error(res.message || 'Incorrect editing password');
       }
     } catch (err: any) {
       setIsLoading(false);
       setIsShaking(true);
-      // Ensure error message is specific to PIN unlock and never shows confusing "Unable to save" text
-      let displayMessage = 'Incorrect 4-digit PIN. Please try again.';
+      let displayMessage = 'Incorrect editing password. Please try again.';
       if (err?.message && !err.message.toLowerCase().includes('unable to save')) {
         displayMessage = err.message;
       } else if (err?.message?.toLowerCase().includes('unable to save')) {
-        displayMessage = 'Connection issue while verifying PIN. Please try again.';
+        displayMessage = 'Connection issue while verifying password. Please try again.';
       }
       setError(displayMessage);
       setTimeout(() => {
@@ -78,17 +75,10 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
   };
 
   const handleKeypadDigit = (digit: string) => {
-    if (pin.length < PIN_LENGTH && !isLoading) {
+    if (!isLoading) {
       const newPin = pin + digit;
       setPin(newPin);
       setError(null);
-
-      // Auto-verify when 4 digits entered
-      if (newPin.length === PIN_LENGTH) {
-        setTimeout(() => {
-          verifyWithCode(newPin);
-        }, 100);
-      }
     }
   };
 
@@ -114,10 +104,7 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isLoading) return;
 
-      if (e.key >= '0' && e.key <= '9') {
-        e.preventDefault();
-        handleKeypadDigit(e.key);
-      } else if (e.key === 'Backspace') {
+      if (e.key === 'Backspace') {
         e.preventDefault();
         handleBackspace();
       } else if (e.key === 'Escape') {
@@ -132,6 +119,11 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
         if (pin.length > 0) {
           verifyWithCode(pin);
         }
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Direct character input
+        e.preventDefault();
+        setPin((prev) => prev + e.key);
+        setError(null);
       }
     };
 
@@ -186,7 +178,7 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
             <span>Protected Action</span>
           </h3>
           <p className="mt-1 text-xs text-[#736A5E] dark:text-slate-300 font-medium">
-            Enter your 4-digit PIN to make changes.
+            Enter your editing password to make changes.
           </p>
           {actionDescription && (
             <p className="mt-1.5 text-[11px] text-[#5B8266] dark:text-emerald-400 font-semibold bg-[#EBF3EE] dark:bg-emerald-950/40 py-1 px-2.5 rounded-lg inline-block">
@@ -195,34 +187,25 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
           )}
         </div>
 
-        {/* Body Form - Target CSS Selector */}
+        {/* Body Form */}
         <form onSubmit={handleVerify} className="p-6 pt-5 space-y-4">
-          {/* Hidden Input for Mobile Keyboards & Screen Readers */}
+          {/* Input for Mobile Keyboards, Password Managers & Screen Readers */}
           <input
             ref={inputRef}
             id="protected-password-input"
             type="password"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={PIN_LENGTH}
             value={pin}
             onChange={(e) => {
-              const val = e.target.value.replace(/\D/g, '').slice(0, PIN_LENGTH);
-              setPin(val);
+              setPin(e.target.value);
               setError(null);
-              if (val.length === PIN_LENGTH) {
-                setTimeout(() => {
-                  verifyWithCode(val);
-                }, 100);
-              }
             }}
             disabled={isLoading}
             className="sr-only"
-            aria-label="4-digit security PIN"
-            autoComplete="one-time-code"
+            aria-label="Editing password"
+            autoComplete="current-password"
           />
 
-          {/* 4-Digit PIN Header & Toggle */}
+          {/* Password Header & Toggle */}
           <div className="space-y-2.5">
             <div className="flex items-center justify-between px-1">
               <label
@@ -230,14 +213,14 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
                 className="text-xs font-semibold text-[#5C554B] dark:text-slate-300 cursor-pointer"
                 onClick={() => inputRef.current?.focus()}
               >
-                4-Digit PIN
+                Editing Password
               </label>
               <button
                 type="button"
                 tabIndex={-1}
                 onClick={() => setShowPin(!showPin)}
                 className="inline-flex items-center gap-1 text-[11px] font-medium text-[#7D766C] dark:text-slate-400 hover:text-[#2D2A26] dark:hover:text-white transition-colors cursor-pointer"
-                aria-label={showPin ? 'Hide PIN digits' : 'Show PIN digits'}
+                aria-label={showPin ? 'Hide password' : 'Show password'}
               >
                 {showPin ? (
                   <>
@@ -253,7 +236,7 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
               </button>
             </div>
 
-            {/* 4-Digit Visual Slots */}
+            {/* Visual Slots */}
             <div
               id="protected-pin-display"
               onClick={() => inputRef.current?.focus()}

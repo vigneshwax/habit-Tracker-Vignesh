@@ -341,13 +341,19 @@ SUPABASE_ANON_KEY="sb_publishable_E44ScvoJpk-PMZS3Oqp8ZA_8EjrqBNP"
 
 The application supports both containerized environments (Node.js standalone / Cloud Run) and serverless cloud hosting (Vercel):
 
-- **Vercel Serverless Function Adapter (`api/index.ts`)**:
-  - Exports an Express request handler that runs seamlessly as a Vercel Serverless Function.
-  - Automatically handles path normalization (ensuring `/api` prefix consistency whether Vercel retains or strips the prefix).
-- **Vercel Routing (`vercel.json`)**:
-  - Rewrites all `/api/*` requests to the `/api` serverless function (`api/index.ts`).
-  - Rewrites all client-side SPA navigation routes to `/index.html`.
-  - Serves static assets (`/assets/*`, `/favicon.ico`, `/icon.png`) directly from `dist/` with optimal caching.
+- **Dedicated Password Verification Function (`api/auth/verify-password.ts`)**:
+  - Standalone Vercel Serverless Function deployed directly to `/api/auth/verify-password`.
+  - Validates edit password `9500` with zero cold-start delay using native Node HTTP and crypto primitives.
+  - Automatically handles preflight OPTIONS CORS requests and issues a secure 15-minute `edit_session_` token.
+  - Alias provided at `api/auth/verify-pin.ts` for backward compatibility.
+- **Express Serverless Adapters (`api/[...all].ts` & `api/index.ts`)**:
+  - Catch-all serverless function routing `/api/*` requests to the unified Express application in `server.ts`.
+  - Normalizes `req.url` paths so Express receives standard `/api/...` endpoints.
+- **Vercel Routing Configuration (`vercel.json`)**:
+  - Direct routes for `/api/auth/verify-password` and `/auth/verify-password`.
+  - Subpath-preserving rewrite for all other API calls: `{"source": "/api/(.*)", "destination": "/api/$1"}`.
+  - Client-side SPA fallback for non-API routes: `{"source": "/((?!api/|api$|auth/).*)", "destination": "/index.html"}`.
+  - Static asset serving (`/assets/*`, `/favicon.ico`, `/icon.png`) directly from `dist/` with optimal caching.
 - **Dynamic Serverless Environment Resolution**:
   - `SUPABASE_URL` and `SUPABASE_ANON_KEY` are read dynamically from `process.env` during function execution to ensure resilience across serverless cold starts.
   - The website edit password `9500` is defined directly in application code, removing dependency on environment variables for edit unlocking on Vercel.

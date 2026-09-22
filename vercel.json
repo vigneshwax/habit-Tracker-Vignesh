@@ -1,16 +1,27 @@
 {
+  "functions": {
+    "api/**/*.ts": {
+      "memory": 1024,
+      "maxDuration": 15
+    }
+  },
   "rewrites": [
     {
-      "source": "/api",
-      "destination": "/api"
+      "source": "/api/auth/verify-password",
+      "destination": "/api/auth/verify-password"
+    },
+    {
+      "source": "/auth/verify-password",
+      "destination": "/api/auth/verify-password"
     },
     {
       "source": "/api/(.*)",
-      "destination": "/api"
+      "destination": "/api/$1"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!api/|api$|auth/).*)",
       "destination": "/index.html"
     }
   ]
 }
+

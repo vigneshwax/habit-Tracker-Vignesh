@@ -40,7 +40,7 @@ export function DashboardScoreCard({ habits, entries, month, year, onOpenGoals }
   const strokeDashoffset = circumference - (scoreData.score / 100) * circumference;
 
   return (
-    <div id="v3-dashboard-score-card" className="bg-white dark:bg-slate-800 rounded-2xl p-5 sm:p-6 border border-slate-200 dark:border-slate-700 shadow-sm transition-all">
+    <div id="v3-dashboard-score-card" className="bg-white dark:bg-slate-800 rounded-2xl p-5 sm:p-6 border border-slate-200 dark:border-slate-700 shadow-sm transition-all duration-300 ease-out hover:scale-[1.008] hover:shadow-md hover:border-slate-300 dark:hover:border-slate-600">
       <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-6">
         {/* Left: Circular Score & Message */}
         <div className="flex items-center gap-5">

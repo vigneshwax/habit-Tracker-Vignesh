@@ -99,6 +99,8 @@ A minimalist, high-craft personal Habit Tracker and Life Management System built
 ---
 
 ### 3. Today's Focus Dashboard (`src/components/TodayFocus.tsx`, `src/components/DashboardScoreCard.tsx` & `src/components/TodaySparklineCard.tsx`)
+- **Interactive Card Hover Dynamics**:
+  - All primary dashboard cards (Dashboard Score Card, 7-Day Sparkline Card, Action Checklist Card, Compact Mood Widget, Daily Journal Card, and individual habit action cards) feature hardware-accelerated subtle scaling (`hover:scale-[1.008]` / `hover:scale-[1.015]`), elevation shadow intensity increases (`hover:shadow-md`), and edge border highlight transitions for immediate tactile feedback.
 - **Dashboard Score Card**: Displays your 0–100 daily score, current streak, best streak, 7-day velocity, and early warning for at-risk habits.
 - **7-Day Habit Completion Sparkline (`src/components/TodaySparklineCard.tsx`)**:
   - Displays a responsive, sleek sparkline area chart built with **recharts** tracking total completed habits over the last 7 consecutive days (Day -6 through Today).

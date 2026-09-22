@@ -120,7 +120,7 @@ export const TodayFocus: React.FC<TodayFocusProps> = ({
       />
 
       {/* 2. Today's Action Section Header */}
-      <div className="bg-[#FFFFFF] dark:bg-slate-800 rounded-3xl border border-[#ECE6DC] dark:border-slate-700 shadow-xs p-5 sm:p-6">
+      <div className="bg-[#FFFFFF] dark:bg-slate-800 rounded-3xl border border-[#ECE6DC] dark:border-slate-700 shadow-xs p-5 sm:p-6 transition-all duration-300 ease-out hover:scale-[1.008] hover:shadow-md hover:border-[#D5CDC0] dark:hover:border-slate-600">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -264,10 +264,10 @@ export const TodayFocus: React.FC<TodayFocusProps> = ({
             return (
               <div
                 key={habit.id}
-                className={`flex flex-col justify-between p-4 rounded-2xl border transition-all duration-200 ${
+                className={`flex flex-col justify-between p-4 rounded-2xl border transition-all duration-200 ease-out hover:scale-[1.015] hover:-translate-y-0.5 hover:shadow-md ${
                   isDone
-                    ? 'bg-[#F2F8F4] dark:bg-emerald-950/20 border-[#D5E5D9] dark:border-emerald-800 shadow-2xs'
-                    : 'bg-[#FFFFFF] dark:bg-slate-800 border-[#E8E2D7] dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 shadow-xs'
+                    ? 'bg-[#F2F8F4] dark:bg-emerald-950/20 border-[#D5E5D9] dark:border-emerald-800 shadow-2xs hover:border-[#B5D1BC] dark:hover:border-emerald-700'
+                    : 'bg-[#FFFFFF] dark:bg-slate-800 border-[#E8E2D7] dark:border-slate-700 hover:border-[#5B8266] dark:hover:border-emerald-600 shadow-xs'
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">

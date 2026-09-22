@@ -74,7 +74,7 @@ export const CompactMoodWidget: React.FC<CompactMoodWidgetProps> = ({
   return (
     <div
       id="compact-mood-widget"
-      className="bg-[#FFFFFF] dark:bg-slate-800 rounded-3xl border border-[#ECE6DC] dark:border-slate-700 shadow-xs p-4 sm:p-5 transition-all"
+      className="bg-[#FFFFFF] dark:bg-slate-800 rounded-3xl border border-[#ECE6DC] dark:border-slate-700 shadow-xs p-4 sm:p-5 transition-all duration-300 ease-out hover:scale-[1.008] hover:shadow-md hover:border-[#D5CDC0] dark:hover:border-slate-600"
     >
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         {/* Left Info */}

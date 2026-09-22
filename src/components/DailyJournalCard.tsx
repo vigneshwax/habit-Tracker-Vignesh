@@ -77,7 +77,7 @@ export function DailyJournalCard({ dateStr, onSaved }: DailyJournalCardProps) {
   };
 
   return (
-    <div id="v3-daily-journal-card" className="bg-white dark:bg-slate-800 rounded-2xl p-5 sm:p-6 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+    <div id="v3-daily-journal-card" className="bg-white dark:bg-slate-800 rounded-2xl p-5 sm:p-6 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4 transition-all duration-300 ease-out hover:scale-[1.008] hover:shadow-md hover:border-slate-300 dark:hover:border-slate-600">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400">

@@ -79,7 +79,7 @@ export const VisualAffirmation: React.FC<VisualAffirmationProps> = ({
   };
 
   return (
-    <div className="bg-[#FFFFFF] rounded-3xl border border-[#ECE6DC] shadow-xs p-5 sm:p-6 mb-8 overflow-hidden relative">
+    <div className="bg-[#FFFFFF] rounded-3xl border border-[#ECE6DC] shadow-xs p-5 sm:p-6 mb-8 overflow-hidden relative transition-all duration-300 ease-out hover:scale-[1.005] hover:shadow-md hover:border-[#D5CDC0]">
       <div className="flex items-center justify-between pb-3 border-b border-[#F0EBE1] mb-4">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-[#FAF4EE] text-[#8A674D] flex items-center justify-center">

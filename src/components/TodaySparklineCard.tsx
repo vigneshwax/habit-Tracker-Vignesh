@@ -103,7 +103,7 @@ export const TodaySparklineCard: React.FC<TodaySparklineCardProps> = ({
   return (
     <div
       id="today-7day-sparkline-card"
-      className="bg-[#FFFFFF] dark:bg-slate-800 rounded-3xl border border-[#ECE6DC] dark:border-slate-700 shadow-xs p-5 sm:p-6 transition-all"
+      className="bg-[#FFFFFF] dark:bg-slate-800 rounded-3xl border border-[#ECE6DC] dark:border-slate-700 shadow-xs p-5 sm:p-6 transition-all duration-300 ease-out hover:scale-[1.008] hover:shadow-md hover:border-[#D5CDC0] dark:hover:border-slate-600"
     >
       {/* Top Header Row */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#F0EBE1] dark:border-slate-700/80">

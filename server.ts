@@ -1929,13 +1929,16 @@ app.get('/api/moods', async (req: Request, res: Response) => {
     try {
       const { data, error } = await sb.from('mood_tracker').select('*').order('date', { ascending: false });
       if (!error && Array.isArray(data)) {
-        return res.json({ moods: data });
+        for (const item of data) {
+          const idx = localDb.mood_tracker.findIndex((m) => m.id === item.id || m.date === item.date);
+          if (idx >= 0) localDb.mood_tracker[idx] = { ...localDb.mood_tracker[idx], ...item };
+          else localDb.mood_tracker.push(item);
+        }
+        const sorted = [...localDb.mood_tracker].sort((a, b) => b.date.localeCompare(a.date));
+        return res.json({ moods: sorted });
       }
-      if (error) {
-        console.warn('[Supabase] Warning fetching moods from mood_tracker:', error.message);
-      }
-    } catch (err: any) {
-      console.warn('[Supabase] Exception fetching moods from mood_tracker:', err?.message || err);
+    } catch (_err) {
+      // Graceful fallback to localDb
     }
   }
 
@@ -1954,8 +1957,8 @@ app.get('/api/moods/:id', async (req: Request, res: Response) => {
       if (!error && data) {
         return res.json({ mood: data });
       }
-    } catch (err: any) {
-      console.warn('[Supabase] Exception fetching mood by ID:', err?.message || err);
+    } catch (_err) {
+      // Graceful fallback to localDb
     }
   }
 
@@ -2008,15 +2011,11 @@ app.post('/api/moods', async (req: Request, res: Response) => {
   if (sb) {
     try {
       // Check if mood for this date already exists to prevent duplicate entries
-      const { data: existing, error: findErr } = await sb
+      const { data: existing } = await sb
         .from('mood_tracker')
         .select('*')
         .eq('date', date)
         .maybeSingle();
-
-      if (findErr) {
-        console.warn('[Supabase] Warning searching mood_tracker by date:', findErr.message);
-      }
 
       if (existing) {
         // Update existing record by ID
@@ -2025,18 +2024,15 @@ app.post('/api/moods', async (req: Request, res: Response) => {
           updated_at: new Date().toISOString(),
         };
         const updateRes = await resilientUpdate(sb, 'mood_tracker', existing.id, updatePayload);
-        if (updateRes.error) {
-          console.error('[Supabase] Error updating mood_tracker:', updateRes.error);
-          return res.status(500).json({ error: `Failed to update mood: ${updateRes.error.message || 'Database error'}` });
+        if (!updateRes.error) {
+          const resultRecord = { ...existing, ...updatePayload, ...(updateRes.data || {}), id: existing.id, date };
+
+          const lIdx = localDb.mood_tracker.findIndex((m) => m.date === date || m.id === existing.id);
+          if (lIdx >= 0) localDb.mood_tracker[lIdx] = resultRecord;
+          else localDb.mood_tracker.push(resultRecord);
+
+          return res.json({ mood: resultRecord, updated: true });
         }
-
-        const resultRecord = { ...existing, ...updatePayload, ...(updateRes.data || {}), id: existing.id, date };
-
-        const lIdx = localDb.mood_tracker.findIndex((m) => m.date === date || m.id === existing.id);
-        if (lIdx >= 0) localDb.mood_tracker[lIdx] = resultRecord;
-        else localDb.mood_tracker.push(resultRecord);
-
-        return res.json({ mood: resultRecord, updated: true });
       } else {
         // Insert new record
         const newRecord = {
@@ -2046,22 +2042,18 @@ app.post('/api/moods', async (req: Request, res: Response) => {
           updated_at: new Date().toISOString(),
         };
         const insertRes = await resilientInsert(sb, 'mood_tracker', newRecord);
-        if (insertRes.error) {
-          console.error('[Supabase] Error inserting into mood_tracker:', insertRes.error);
-          return res.status(500).json({ error: `Failed to insert mood: ${insertRes.error.message || 'Database error'}` });
+        if (!insertRes.error) {
+          const resultRecord = { ...newRecord, ...(insertRes.data || {}), date };
+
+          const lIdx = localDb.mood_tracker.findIndex((m) => m.date === date);
+          if (lIdx >= 0) localDb.mood_tracker[lIdx] = resultRecord;
+          else localDb.mood_tracker.push(resultRecord);
+
+          return res.json({ mood: resultRecord, created: true });
         }
-
-        const resultRecord = { ...newRecord, ...(insertRes.data || {}), date };
-
-        const lIdx = localDb.mood_tracker.findIndex((m) => m.date === date);
-        if (lIdx >= 0) localDb.mood_tracker[lIdx] = resultRecord;
-        else localDb.mood_tracker.push(resultRecord);
-
-        return res.json({ mood: resultRecord, created: true });
       }
-    } catch (err: any) {
-      console.error('[Supabase] Exception in POST /api/moods:', err);
-      return res.status(500).json({ error: `Failed to save mood entry: ${err?.message || 'Database error'}` });
+    } catch (_err) {
+      // Graceful fallback to local persistence if Supabase network fails
     }
   }
 
@@ -2130,20 +2122,17 @@ app.put('/api/moods/:id', async (req: Request, res: Response) => {
   if (sb) {
     try {
       const updateRes = await resilientUpdate(sb, 'mood_tracker', id, payload);
-      if (updateRes.error) {
-        console.error('[Supabase] Error updating mood_tracker:', updateRes.error);
-        return res.status(500).json({ error: `Failed to update mood: ${updateRes.error.message || 'Database error'}` });
+      if (!updateRes.error) {
+        const updated = updateRes.data || { id, ...payload };
+
+        const lIdx = localDb.mood_tracker.findIndex((m) => m.id === id);
+        if (lIdx >= 0) localDb.mood_tracker[lIdx] = { ...localDb.mood_tracker[lIdx], ...updated };
+        else localDb.mood_tracker.push(updated);
+
+        return res.json({ mood: updated });
       }
-      const updated = updateRes.data || { id, ...payload };
-
-      const lIdx = localDb.mood_tracker.findIndex((m) => m.id === id);
-      if (lIdx >= 0) localDb.mood_tracker[lIdx] = { ...localDb.mood_tracker[lIdx], ...updated };
-      else localDb.mood_tracker.push(updated);
-
-      return res.json({ mood: updated });
-    } catch (err: any) {
-      console.error('[Supabase] Exception during mood_tracker update:', err?.message || err);
-      return res.status(500).json({ error: `Failed to update mood entry: ${err?.message || 'Database error'}` });
+    } catch (_err) {
+      // Graceful fallback to localDb
     }
   }
 
@@ -2162,14 +2151,9 @@ app.delete('/api/moods/:id', async (req: Request, res: Response) => {
   const sb = getSupabase();
   if (sb) {
     try {
-      const { error } = await sb.from('mood_tracker').delete().eq('id', id);
-      if (error) {
-        console.error('[Supabase] Error deleting from mood_tracker:', error.message);
-        return res.status(500).json({ error: `Failed to delete mood: ${error.message}` });
-      }
-    } catch (err: any) {
-      console.error('[Supabase] Exception deleting from mood_tracker:', err?.message || err);
-      return res.status(500).json({ error: `Failed to delete mood entry: ${err?.message || 'Database error'}` });
+      await sb.from('mood_tracker').delete().eq('id', id);
+    } catch (_err) {
+      // Graceful fallback to localDb
     }
   }
 

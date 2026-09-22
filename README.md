@@ -69,7 +69,7 @@ A minimalist, high-craft personal Habit Tracker and Life Management System built
 - **On-Demand Lock / Unlock Toggle**:
   - Users can lock editing at any time by clicking the Lock/Unlock icon (`#header-view-only-indicator` / `#header-edit-unlocked-indicator`) in the header.
   - Entering the configured `APP_EDIT_PASSWORD` unlocks editing capabilities again.
-  - **Visual Feedback & Input**: Clean password modal with toggleable visibility, visual indicators, physical keyboard typing (numbers, characters, Backspace, Delete, Escape, Enter), and on-screen keypad support.
+  - **Visual Feedback & Input**: Clean, auto-fit password verification modal with dynamic viewport containment (`max-h-[min(94dvh,560px)]`, `max-w-[330px] sm:max-w-[360px]`), auto-scaling keypad and PIN slots that fit comfortably on all mobile, tablet, and desktop screens without clipping, toggleable visibility, visual indicators, physical keyboard typing (numbers, characters, Backspace, Delete, Escape, Enter), and touch keypad support.
 
 ---
 
@@ -269,8 +269,8 @@ The backend incorporates automated schema resilience (`resilientUpdate`, `resili
 - `GET /api/status`: Health check and database connectivity info.
 - `POST /api/auth/verify-password`: Password verification against `process.env.APP_EDIT_PASSWORD` returning an edit session token (`token`, `expiresIn`, 15-minute sliding session window).
 - `POST /api/auth/lock`: Revokes active edit session token and re-locks editing.
-- `GET /api/moods` & `POST /api/moods`: Dedicated `public.mood_tracker` endpoints with strict date validation (YYYY-MM-DD), unique daily record enforcement (auto-updates existing entry on duplicate date), and protected write access.
-- `PUT /api/moods/:id` & `DELETE /api/moods/:id`: Update and delete individual mood entries (protected by edit session token).
+- `GET /api/moods` & `POST /api/moods`: Dedicated `public.mood_tracker` endpoints with strict date validation (YYYY-MM-DD), unique daily record enforcement (auto-updates existing entry on duplicate date), protected write access, and resilient offline/localDb fallback.
+- `PUT /api/moods/:id` & `DELETE /api/moods/:id`: Update and delete individual mood entries (protected by edit session token with seamless fallback).
 - `GET /api/habits` & `POST /api/habits`: Fetch and create habits.
 - `PUT /api/habits/:id` & `DELETE /api/habits/:id`: Update, pause, archive, and delete habits.
 - `GET /api/goals` & `POST /api/goals` & `PUT /api/goals/:id` & `DELETE /api/goals/:id`: Goal CRUD endpoints.

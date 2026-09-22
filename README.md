@@ -334,3 +334,20 @@ APP_EDIT_PASSWORD="your-edit-password"
 - `npm run build`: Compiles Vite static assets and bundles `server.ts` into `dist/server.cjs` via `esbuild`.
 - `npm run start`: Runs the compiled CommonJS server (`node dist/server.cjs`).
 - `npm run lint`: Runs TypeScript and ESLint validation.
+
+---
+
+## 🚀 Production & Vercel Deployment Architecture
+
+The application supports both containerized environments (Node.js standalone / Cloud Run) and serverless cloud hosting (Vercel):
+
+- **Vercel Serverless Function Adapter (`api/index.ts`)**:
+  - Exports an Express request handler that runs seamlessly as a Vercel Serverless Function.
+  - Automatically handles path normalization (ensuring `/api` prefix consistency whether Vercel retains or strips the prefix).
+- **Vercel Routing (`vercel.json`)**:
+  - Rewrites all `/api/*` requests to the `/api` serverless function (`api/index.ts`).
+  - Rewrites all client-side SPA navigation routes to `/index.html`.
+  - Serves static assets (`/assets/*`, `/favicon.ico`, `/icon.png`) directly from `dist/` with optimal caching.
+- **Dynamic Serverless Environment Resolution**:
+  - `APP_EDIT_PASSWORD`, `SUPABASE_URL`, and `SUPABASE_ANON_KEY` are read dynamically from `process.env` during function execution to ensure resilience across serverless cold starts.
+  - Standalone `app.listen()` and dev Vite middlewares are automatically skipped in Vercel (`process.env.VERCEL = 1`), preventing port binding conflicts.

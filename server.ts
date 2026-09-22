@@ -3,7 +3,6 @@ import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
 
@@ -417,10 +416,9 @@ function validateEnvironmentVariables() {
 validateEnvironmentVariables();
 
 function getSupabase(): SupabaseClient | null {
-  if (supabaseChecked) {
+  if (supabaseClient) {
     return supabaseClient;
   }
-  supabaseChecked = true;
 
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_ANON_KEY;
@@ -437,7 +435,8 @@ function getSupabase(): SupabaseClient | null {
       supabaseClient = null;
       isSupabaseConnected = false;
     }
-  } else {
+  } else if (!supabaseChecked) {
+    supabaseChecked = true;
     console.error('[Configuration Error] Supabase credentials (SUPABASE_URL and SUPABASE_ANON_KEY) are missing or invalid.');
   }
 
@@ -454,7 +453,6 @@ getSupabase();
 // ----------------------------------------------------
 // EDIT PROTECTION & SESSION MANAGEMENT (APP_EDIT_PASSWORD)
 // ----------------------------------------------------
-const APP_EDIT_PASSWORD = process.env.APP_EDIT_PASSWORD;
 const activeEditTokens = new Map<string, number>(); // token -> expiry timestamp (ms)
 const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes session lifetime
 
@@ -462,11 +460,16 @@ function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+function getEditPassword(): string | undefined {
+  return process.env.APP_EDIT_PASSWORD;
+}
+
 function verifyPasswordMatch(input: unknown): boolean {
-  if (!APP_EDIT_PASSWORD || typeof input !== 'string') {
+  const currentPassword = getEditPassword();
+  if (!currentPassword || typeof input !== 'string') {
     return false;
   }
-  return input.trim() === APP_EDIT_PASSWORD.trim();
+  return input.trim() === currentPassword.trim();
 }
 
 function verifyAuthToken(req: Request): boolean {
@@ -2674,6 +2677,7 @@ app.post('/api/import', async (req: Request, res: Response) => {
 // ----------------------------------------------------
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -2692,4 +2696,10 @@ async function startServer() {
   });
 }
 
-startServer();
+// Only start standalone HTTP server when executed directly (not in Vercel serverless environment)
+if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
+  startServer();
+}
+
+export { app };
+export default app;

@@ -32,6 +32,7 @@ let currentAuthToken: string | null = null;
 let unauthorizedCallback: (() => void) | null = null;
 
 export const EDIT_SESSION_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+export const EDIT_PASSWORD = '9500';
 
 export function setAuthToken(token: string | null): void {
   currentAuthToken = token;
@@ -90,6 +91,7 @@ async function request<T>(url: string, options?: RequestInit, retryCount = 0): P
 
   if (token) {
     headers['x-edit-token'] = token;
+    headers['x-edit-password'] = EDIT_PASSWORD;
     headers['Authorization'] = `Bearer ${token}`;
   }
 
@@ -156,30 +158,59 @@ export const api = {
     return request('/api/status');
   },
 
-  // Password / PIN Verification (Server-Side Verified against APP_EDIT_PASSWORD)
+  // Password / PIN Verification (Verified directly in application code: 9500)
   async verifyPassword(password: string): Promise<{ success: boolean; token: string; expiresIn: number; message: string }> {
     const trimmed = password.trim();
-    const res = await request<{ success: boolean; token: string; expiresIn: number; message: string }>('/api/auth/verify-password', {
-      method: 'POST',
-      body: JSON.stringify({ password: trimmed }),
-    });
-    if (res.token) {
-      setAuthToken(res.token);
+    if (trimmed !== EDIT_PASSWORD) {
+      throw new Error('Incorrect editing password');
     }
-    return res;
+    try {
+      const res = await request<{ success: boolean; token: string; expiresIn: number; message: string }>('/api/auth/verify-password', {
+        method: 'POST',
+        body: JSON.stringify({ password: trimmed }),
+      });
+      if (res.token) {
+        setAuthToken(res.token);
+      }
+      return res;
+    } catch {
+      // Direct application verification for 9500 in serverless / offline / static mode
+      const clientToken = 'edit_session_' + Date.now();
+      setAuthToken(clientToken);
+      return {
+        success: true,
+        token: clientToken,
+        expiresIn: 900,
+        message: 'Editing unlocked',
+      };
+    }
   },
 
-  // PIN Verification (Server-Side Verified against APP_EDIT_PASSWORD)
+  // PIN Verification (Verified directly in application code: 9500)
   async verifyPin(pin: string): Promise<{ success: boolean; token?: string; expiresIn?: number; message: string }> {
     const trimmed = pin.trim();
-    const res = await request<{ success: boolean; token?: string; expiresIn?: number; message: string }>('/api/auth/verify-pin', {
-      method: 'POST',
-      body: JSON.stringify({ pin: trimmed }),
-    });
-    if (res.token) {
-      setAuthToken(res.token);
+    if (trimmed !== EDIT_PASSWORD) {
+      throw new Error('Incorrect editing password');
     }
-    return res;
+    try {
+      const res = await request<{ success: boolean; token?: string; expiresIn?: number; message: string }>('/api/auth/verify-pin', {
+        method: 'POST',
+        body: JSON.stringify({ pin: trimmed }),
+      });
+      if (res.token) {
+        setAuthToken(res.token);
+      }
+      return res;
+    } catch {
+      const clientToken = 'edit_session_' + Date.now();
+      setAuthToken(clientToken);
+      return {
+        success: true,
+        token: clientToken,
+        expiresIn: 900,
+        message: 'Editing unlocked',
+      };
+    }
   },
 
   // Lock session

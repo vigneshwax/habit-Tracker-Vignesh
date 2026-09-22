@@ -75,10 +75,13 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
   };
 
   const handleKeypadDigit = (digit: string) => {
-    if (!isLoading) {
+    if (!isLoading && pin.length < 4) {
       const newPin = pin + digit;
       setPin(newPin);
       setError(null);
+      if (newPin.length === 4) {
+        verifyWithCode(newPin);
+      }
     }
   };
 
@@ -122,8 +125,14 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
       } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Direct character input
         e.preventDefault();
-        setPin((prev) => prev + e.key);
-        setError(null);
+        if (pin.length < 4) {
+          const nextPin = pin + e.key;
+          setPin(nextPin);
+          setError(null);
+          if (nextPin.length === 4) {
+            verifyWithCode(nextPin);
+          }
+        }
       }
     };
 

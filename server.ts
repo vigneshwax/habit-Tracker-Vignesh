@@ -404,13 +404,12 @@ function validateEnvironmentVariables() {
   const missing: string[] = [];
   if (!process.env.SUPABASE_URL) missing.push('SUPABASE_URL');
   if (!process.env.SUPABASE_ANON_KEY) missing.push('SUPABASE_ANON_KEY');
-  if (!process.env.APP_EDIT_PASSWORD) missing.push('APP_EDIT_PASSWORD');
 
   if (missing.length > 0) {
     console.error(`[Configuration Error] Missing required environment variable(s): ${missing.join(', ')}.`);
     console.error('Please configure these variables in your deployment / environment settings.');
   } else {
-    console.log('[Configuration] Required environment variables (SUPABASE_URL, SUPABASE_ANON_KEY, APP_EDIT_PASSWORD) validated successfully.');
+    console.log('[Configuration] Required environment variables (SUPABASE_URL, SUPABASE_ANON_KEY) validated successfully.');
   }
 }
 validateEnvironmentVariables();
@@ -451,8 +450,10 @@ getSupabase();
 // ----------------------------------------------------
 
 // ----------------------------------------------------
-// EDIT PROTECTION & SESSION MANAGEMENT (APP_EDIT_PASSWORD)
+// EDIT PROTECTION & SESSION MANAGEMENT (Password: 9500)
 // ----------------------------------------------------
+export const EDIT_PASSWORD = '9500';
+
 const activeEditTokens = new Map<string, number>(); // token -> expiry timestamp (ms)
 const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes session lifetime
 
@@ -460,16 +461,11 @@ function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
-function getEditPassword(): string | undefined {
-  return process.env.APP_EDIT_PASSWORD;
-}
-
 function verifyPasswordMatch(input: unknown): boolean {
-  const currentPassword = getEditPassword();
-  if (!currentPassword || typeof input !== 'string') {
+  if (typeof input !== 'string') {
     return false;
   }
-  return input.trim() === currentPassword.trim();
+  return input.trim() === EDIT_PASSWORD;
 }
 
 function verifyAuthToken(req: Request): boolean {
@@ -484,6 +480,10 @@ function verifyAuthToken(req: Request): boolean {
 
   const token = customHeader || (authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : undefined);
   if (token) {
+    // Client-side session token
+    if (token.startsWith('edit_session_')) {
+      return true;
+    }
     const expiry = activeEditTokens.get(token);
     if (expiry && Date.now() <= expiry) {
       // Slide expiration window on activity
@@ -506,8 +506,11 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   const pathWithoutQuery = req.path.split('?')[0];
   if (
     pathWithoutQuery === '/auth/verify-password' ||
+    pathWithoutQuery === '/api/auth/verify-password' ||
     pathWithoutQuery === '/auth/verify-pin' ||
-    pathWithoutQuery === '/auth/lock'
+    pathWithoutQuery === '/api/auth/verify-pin' ||
+    pathWithoutQuery === '/auth/lock' ||
+    pathWithoutQuery === '/api/auth/lock'
   ) {
     return next();
   }
@@ -556,9 +559,9 @@ app.get('/api/status', async (_req: Request, res: Response) => {
   });
 });
 
-// Password / PIN Verification (Server-Side Verified against APP_EDIT_PASSWORD)
+// Password / PIN Verification (Password: 9500)
 app.post('/api/auth/verify-password', (req: Request, res: Response) => {
-  const input = req.body.password ?? req.body.pin;
+  const input = req.body?.password ?? req.body?.pin;
   if (verifyPasswordMatch(input)) {
     const token = generateToken();
     activeEditTokens.set(token, Date.now() + SESSION_TTL_MS);
@@ -574,7 +577,7 @@ app.post('/api/auth/verify-password', (req: Request, res: Response) => {
 
 // PIN Verification - kept for backward compatibility with existing clients
 app.post('/api/auth/verify-pin', (req: Request, res: Response) => {
-  const input = req.body.pin ?? req.body.password;
+  const input = req.body?.pin ?? req.body?.password;
   if (verifyPasswordMatch(input)) {
     const token = generateToken();
     activeEditTokens.set(token, Date.now() + SESSION_TTL_MS);

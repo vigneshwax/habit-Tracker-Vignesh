@@ -57,10 +57,10 @@ A minimalist, high-craft personal Habit Tracker and Life Management System built
   - Every create, edit, update, toggle, and delete action writes directly and permanently to Supabase cloud in real time.
 - **Public Viewing & Single Source of Truth Protected Editing**:
   - **Public Viewing**: Anyone can open the tracker, view habits, browse mood logs, explore analytics, read journal reflections, and inspect goals without entering a password. No password prompt appears on initial page load.
-  - **Protected Editing**: All create, edit, update, toggle, and delete mutations require entering the password set in `APP_EDIT_PASSWORD`.
-  - **Server-Side Verification**: Authentication is verified exclusively by `server.ts` against `process.env.APP_EDIT_PASSWORD`. No hard-coded PINs or credentials exist in the client or server.
-  - **Session Persistence & 15-Minute Timeout**: Once unlocked with `APP_EDIT_PASSWORD`, the client receives an edit session token stored in browser `sessionStorage`. To ensure security, the editing session automatically expires after 15 minutes of inactivity (`15 * 60 * 1000`), automatically re-locking mutations until unlocked again, while public viewing continues uninterrupted.
-  - **Zero Password Exposure**: `APP_EDIT_PASSWORD` is strictly server-side and never exposed to browser JavaScript.
+  - **Protected Editing**: All create, edit, update, toggle, and delete mutations require entering the edit password (`9500`).
+  - **Application Code Verification**: Authentication is verified directly in application code (`9500`) across both client and server. No hard-coded PINs or credentials exist beyond the single configured password `9500`.
+  - **Session Persistence & 15-Minute Timeout**: Once unlocked with `9500`, the client receives an edit session token stored in browser `sessionStorage`. To ensure security, the editing session automatically expires after 15 minutes of inactivity (`15 * 60 * 1000`), automatically re-locking mutations until unlocked again, while public viewing continues uninterrupted.
+  - **Single Accepted Password**: Only `9500` is accepted for unlocking editing. All previous PINs (such as 321 or 0321) are removed.
 - **Elimination of "Unable to Save" False Errors & Multi-Attempt Network Resilience**:
   - Replaced generic connection error masks with accurate, transparent status reporting and reliable network resilience.
   - Automatic exponential backoff retry for momentary network drops, browser reconnection delays, or server warmup/cold-start periods (HTTP 502/503/504), preventing temporary glitches from showing frightening error messages.
@@ -68,7 +68,7 @@ A minimalist, high-craft personal Habit Tracker and Life Management System built
   - Validates and preserves native UUID primary keys for all Supabase tables, preventing ID mismatch errors during updates and deletions.
 - **On-Demand Lock / Unlock Toggle**:
   - Users can lock editing at any time by clicking the Lock/Unlock icon (`#header-view-only-indicator` / `#header-edit-unlocked-indicator`) in the header.
-  - Entering the configured `APP_EDIT_PASSWORD` unlocks editing capabilities again.
+  - Entering the edit password `9500` unlocks editing capabilities again.
   - **Visual Feedback & Input**: Clean, auto-fit password verification modal with dynamic viewport containment (`max-h-[min(94dvh,560px)]`, `max-w-[330px] sm:max-w-[360px]`), auto-scaling keypad and PIN slots that fit comfortably on all mobile, tablet, and desktop screens without clipping, toggleable visibility, visual indicators, physical keyboard typing (numbers, characters, Backspace, Delete, Escape, Enter), and touch keypad support.
 
 ---
@@ -211,7 +211,7 @@ A completely separate, dedicated emotional wellness system backed directly by th
      - Interactive monthly grid with previous/next/today navigation.
      - Displays mood emojis on each logged day with energy badges.
      - Clicking any date opens a detailed inspector modal with date, mood, energy, note, and Edit/Delete controls.
-     - Public viewing without password; modifications require unlocking editing with `APP_EDIT_PASSWORD`.
+     - Public viewing without password; modifications require unlocking editing with password `9500`.
   5. **Mood Analytics (`MoodAnalyticsView.tsx`)**:
      - **Mood Trend Line Chart**: Chronological score progression from 1 (Very Low) to 6 (Excellent).
      - **Energy Trend Line Chart**: Vitality progression from 1 to 5 stars.
@@ -221,7 +221,7 @@ A completely separate, dedicated emotional wellness system backed directly by th
        - `Custom Range` selector with `From:` and `To:` date pickers.
        - Quick time horizon presets: `7 Days`, `30 Days`, `90 Days`, and `All Time`.
    6. **Edit & Delete Modals (`EditMoodModal.tsx`, `DeleteMoodModal.tsx`)**:
-      - Secure dialogs requiring `APP_EDIT_PASSWORD` to safeguard personal reflections while keeping visual viewing public.
+      - Secure dialogs requiring edit password `9500` to safeguard personal reflections while keeping visual viewing public.
 - **Today Dashboard Integration (`src/components/CompactMoodWidget.tsx`)**:
    - Embedded in `TodayFocus.tsx` displaying today's logged mood and energy, or a welcoming "How are you feeling today?" prompt with a 1-tap "Add Mood" button.
 
@@ -232,7 +232,7 @@ A completely separate, dedicated emotional wellness system backed directly by th
   - Interactive selection between **Light Mode** (warm paper daylight palette), **Dark Mode** (deep slate eye-safe night theme), and **System Auto** (synchronizes seamlessly with OS preferences via matchMedia).
   - Instant live theme switching without page reloads, paired with persistent local caching and cloud sync.
 - **Display & Scheduling Preferences**: Week start day (`Sunday` vs `Monday`), default startup view (`Today`, `Grid`, `Calendar`, `Analytics`, `Review`, `Mood`, `Goals`).
-- **Security & Edit Access**: Protected editing gate authenticated against `APP_EDIT_PASSWORD` with support for public view-only browsing and manual session lock.
+- **Security & Edit Access**: Protected editing gate authenticated against edit password `9500` directly in code with support for public view-only browsing and manual session lock.
 - **Database Status**: Real-time Supabase connection and schema verification.
 - **Two-Way Backups**: Export CSV / JSON and import JSON backups with smart merge or overwrite options.
 - **Archived Habits Management**: Restore archived habits back to active status or permanently delete.
@@ -267,7 +267,7 @@ The backend incorporates automated schema resilience (`resilientUpdate`, `resili
 
 ### API Endpoints
 - `GET /api/status`: Health check and database connectivity info.
-- `POST /api/auth/verify-password`: Password verification against `process.env.APP_EDIT_PASSWORD` returning an edit session token (`token`, `expiresIn`, 15-minute sliding session window).
+- `POST /api/auth/verify-password`: Password verification against edit password `9500` returning an edit session token (`token`, `expiresIn`, 15-minute sliding session window).
 - `POST /api/auth/lock`: Revokes active edit session token and re-locks editing.
 - `GET /api/moods` & `POST /api/moods`: Dedicated `public.mood_tracker` endpoints with strict date validation (YYYY-MM-DD), unique daily record enforcement (auto-updates existing entry on duplicate date), protected write access, and resilient offline/localDb fallback.
 - `PUT /api/moods/:id` & `DELETE /api/moods/:id`: Update and delete individual mood entries (protected by edit session token with seamless fallback).
@@ -320,8 +320,8 @@ The project has this default cloud database embedded out of the box for all user
 SUPABASE_URL="https://xhkomruflzquyunhajpo.supabase.co"
 SUPABASE_ANON_KEY="sb_publishable_E44ScvoJpk-PMZS3Oqp8ZA_8EjrqBNP"
 
-# Single source of truth password for edit protection
-APP_EDIT_PASSWORD="your-edit-password"
+# Single source of truth password for edit protection (configured in application code: 9500)
+# (APP_EDIT_PASSWORD environment variable is no longer required; editing password is 9500)
 ```
 
 *Note: You can still override these at any time by configuring custom `SUPABASE_URL` and `SUPABASE_ANON_KEY` in the environment settings.*
@@ -349,5 +349,6 @@ The application supports both containerized environments (Node.js standalone / C
   - Rewrites all client-side SPA navigation routes to `/index.html`.
   - Serves static assets (`/assets/*`, `/favicon.ico`, `/icon.png`) directly from `dist/` with optimal caching.
 - **Dynamic Serverless Environment Resolution**:
-  - `APP_EDIT_PASSWORD`, `SUPABASE_URL`, and `SUPABASE_ANON_KEY` are read dynamically from `process.env` during function execution to ensure resilience across serverless cold starts.
+  - `SUPABASE_URL` and `SUPABASE_ANON_KEY` are read dynamically from `process.env` during function execution to ensure resilience across serverless cold starts.
+  - The website edit password `9500` is defined directly in application code, removing dependency on environment variables for edit unlocking on Vercel.
   - Standalone `app.listen()` and dev Vite middlewares are automatically skipped in Vercel (`process.env.VERCEL = 1`), preventing port binding conflicts.

@@ -124,8 +124,8 @@ export const Header: React.FC<HeaderProps> = ({
                     ? 'bg-[#EBF3EE] dark:bg-emerald-950/60 text-[#2C523A] dark:text-emerald-300 border-[#5B8266]/40 dark:border-emerald-500/50'
                     : 'bg-[#FAF8F5] dark:bg-slate-800 text-[#736A5E] dark:text-slate-300 border-[#E5DFD5] dark:border-slate-700 hover:text-[#2D2A26] dark:hover:text-white'
                 }`}
-                title={isUnlocked ? 'Editing Unlocked. Tap to Lock.' : 'Public View Only. Tap to Unlock Editing with Password.'}
-                aria-label={isUnlocked ? 'Lock editing' : 'Unlock editing with Password'}
+                title={isUnlocked ? 'Unlocked. Tap to Lock.' : 'Locked. Tap to Unlock with Password (9500).'}
+                aria-label={isUnlocked ? 'Lock tracker' : 'Unlock tracker with Password (9500)'}
               >
                 {isUnlocked ? (
                   <Unlock className="w-4 h-4 text-[#2C523A] dark:text-emerald-400" />
@@ -183,8 +183,8 @@ export const Header: React.FC<HeaderProps> = ({
                 id="header-edit-unlocked-indicator"
                 onClick={onLock}
                 className="p-2 rounded-xl bg-[#EBF3EE] dark:bg-emerald-950/60 hover:bg-[#DEECE2] dark:hover:bg-emerald-950/80 border border-[#5B8266]/35 dark:border-emerald-500/40 text-[#2C523A] dark:text-emerald-300 transition-all cursor-pointer select-none active:scale-95 shadow-2xs"
-                title="Editing is Unlocked (15-minute session active). Click to lock back to View Only."
-                aria-label="Lock editing back to View Only"
+                title="Tracker is Unlocked. Click to Lock."
+                aria-label="Lock Tracker"
               >
                 <Unlock className="w-4 h-4 text-[#2C523A] dark:text-emerald-400" />
               </button>
@@ -194,8 +194,8 @@ export const Header: React.FC<HeaderProps> = ({
                 id="header-view-only-indicator"
                 onClick={onUnlockRequest}
                 className="p-2 rounded-xl bg-[#FAF8F5] dark:bg-slate-800 hover:bg-[#F2ECE4] dark:hover:bg-slate-700 border border-[#E5DFD5] dark:border-slate-700 text-[#736A5E] dark:text-slate-300 hover:text-[#2D2A26] dark:hover:text-white transition-all cursor-pointer select-none active:scale-95 shadow-2xs"
-                title="View Only mode. Click to unlock with password."
-                aria-label="Unlock editing with password"
+                title="Locked. Click to unlock with password 9500."
+                aria-label="Unlock with password 9500"
               >
                 <Lock className="w-4 h-4" />
               </button>

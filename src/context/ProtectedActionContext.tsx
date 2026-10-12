@@ -15,11 +15,8 @@ const ProtectedActionContext = createContext<ProtectedActionContextType | null>(
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity
 
 export const ProtectedActionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const token = getAuthToken();
-    return Boolean(token);
-  });
+  // Always require password 9500 on refresh / new page load
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
 
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [actionDescription, setActionDescription] = useState<string | undefined>();
@@ -34,6 +31,27 @@ export const ProtectedActionProvider: React.FC<{ children: React.ReactNode }> = 
   const unlock = useCallback(() => {
     setIsUnlocked(true);
   }, []);
+
+  // Whenever user switches to another tab or hides the page, lock immediately so returning requires password 9500
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        lock();
+      }
+    };
+
+    const handleWindowBlur = () => {
+      lock();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [lock]);
 
   // Listen for backend 401 unauthorized errors
   useEffect(() => {
@@ -101,10 +119,13 @@ export const ProtectedActionProvider: React.FC<{ children: React.ReactNode }> = 
   }, []);
 
   const handleModalClose = useCallback(() => {
-    setIsModalOpen(false);
-    pendingActionRef.current = null;
-    setActionDescription(undefined);
-  }, []);
+    // Only allow closing if already unlocked (e.g. canceling an action when unlocked)
+    if (isUnlocked) {
+      setIsModalOpen(false);
+      pendingActionRef.current = null;
+      setActionDescription(undefined);
+    }
+  }, [isUnlocked]);
 
   const handleModalSuccess = useCallback(() => {
     unlock();
@@ -124,6 +145,9 @@ export const ProtectedActionProvider: React.FC<{ children: React.ReactNode }> = 
     }
   }, [unlock]);
 
+  // If not unlocked, keep entry modal open so entering the website requires password 9500
+  const isGateOpen = isModalOpen || !isUnlocked;
+
   return (
     <ProtectedActionContext.Provider
       value={{
@@ -136,10 +160,11 @@ export const ProtectedActionProvider: React.FC<{ children: React.ReactNode }> = 
     >
       {children}
       <ProtectedActionModal
-        isOpen={isModalOpen}
+        isOpen={isGateOpen}
         onClose={handleModalClose}
         onSuccess={handleModalSuccess}
-        actionDescription={actionDescription}
+        actionDescription={isUnlocked ? actionDescription : undefined}
+        dismissable={isUnlocked}
       />
     </ProtectedActionContext.Provider>
   );

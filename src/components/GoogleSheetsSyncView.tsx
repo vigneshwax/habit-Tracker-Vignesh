@@ -171,7 +171,7 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
           Endpoint & Spreadsheet Settings
         </h3>
         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-          Changes require password 9500 to edit. Public users can browse in read-only mode.
+          Protected with password 9500 to prevent unauthorized configuration changes.
         </p>
 
         <form onSubmit={handleSaveUrls} className="space-y-4">

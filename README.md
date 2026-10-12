@@ -59,13 +59,12 @@ A minimalist, high-craft personal Habit Tracker and Life Management System built
 - **Persistent Local Disk Engine**:
   - The Express backend permanently persists all records directly to `data/db.json` on disk on every create, edit, toggle, update, and delete action.
   - Instantaneous, sub-millisecond local reads and writes with zero external database latency, zero connection drops, and zero cold-start timeouts.
-- **Public Viewing & Single Source of Truth Protected Editing**:
-  - **Public Viewing & Auto-Reflect**: Anyone can open the tracker, view habits, browse mood logs, explore analytics, read journal reflections, and inspect goals without entering a password. Auto-reflect seamlessly polls and displays live data from Google Sheets in read-only mode for viewers without triggering 401 unauthorized warnings or false password prompts.
-  - **Protected Editing**: All create, edit, update, toggle, and delete mutations on tracker data (habits, logs, goals, journal, mood, reviews) require entering the edit password (`9500`).
-  - **Non-Destructive User Preferences**: Non-destructive configuration preferences (such as `theme`, `google_sheets_script_url`, `google_sheets_auto_sync`, and connectivity testing) can be adjusted and tested seamlessly without triggering false "Editing is locked" errors, with instant local persistence (`vignesh_settings`) synchronized directly to the server.
-  - **Application Code Verification**: Authentication is verified directly in application code (`9500`) across both client and server. No hard-coded PINs or credentials exist beyond the single configured password `9500`.
-  - **Session Persistence & 15-Minute Timeout**: Once unlocked with `9500`, the client receives an edit session token stored in browser `sessionStorage`. To ensure security, the editing session automatically expires after 15 minutes of inactivity (`15 * 60 * 1000`), automatically re-locking mutations until unlocked again, while public viewing continues uninterrupted.
-  - **Single Accepted Password**: Only `9500` is accepted for unlocking editing. All previous PINs (such as 321 or 0321) are removed.
+- **Single Source of Truth Password Gate (9500)**:
+  - **Instant Entry & Tab-Switch Protection**: Accessing the tracker requires master password `9500`. Whenever you refresh the page, open a new session, or navigate to another browser tab and return, the app immediately re-locks and prompts for password `9500` to prevent unauthorized viewing or tampering.
+  - **Single Accepted Password**: Only `9500` is accepted for unlocking the website. All previous PINs (such as 321 or 0321) are removed.
+  - **Application Code Verification**: Authentication is verified directly in application code (`9500`) across both client and server.
+  - **Inactivity Timeout**: For additional security while remaining on the active page, the session automatically locks after 15 minutes of inactivity (`15 * 60 * 1000`).
+  - **Protected Editing & Mutations**: All create, edit, update, toggle, and delete mutations on tracker data (habits, logs, goals, journal, mood, reviews) require this verified session with password `9500`.
 - **Elimination of "Unable to Save" False Errors & Multi-Attempt Network Resilience**:
   - Replaced generic connection error masks with accurate, transparent status reporting and reliable network resilience.
   - Automatic exponential backoff retry for momentary network drops, browser reconnection delays, or server warmup/cold-start periods (HTTP 502/503/504), preventing temporary glitches from showing frightening error messages.

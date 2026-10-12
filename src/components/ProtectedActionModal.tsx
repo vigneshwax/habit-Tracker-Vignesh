@@ -8,6 +8,7 @@ interface ProtectedActionModalProps {
   onClose: () => void;
   onSuccess: () => void;
   actionDescription?: string;
+  dismissable?: boolean;
 }
 
 export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
@@ -15,6 +16,7 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
   onClose,
   onSuccess,
   actionDescription,
+  dismissable = true,
 }) => {
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
@@ -114,7 +116,7 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
         e.preventDefault();
         if (pin.length > 0) {
           handleClear();
-        } else {
+        } else if (dismissable) {
           onClose();
         }
       } else if (e.key === 'Enter') {
@@ -147,7 +149,7 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
       id="protected-action-modal-overlay"
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 dark:bg-black/75 backdrop-blur-xs animate-in fade-in duration-150 overflow-y-auto overscroll-contain"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !isLoading) {
+        if (e.target === e.currentTarget && !isLoading && dismissable) {
           onClose();
         }
       }}
@@ -168,16 +170,18 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
       >
         {/* Header */}
         <div className="relative p-3.5 sm:p-4.5 pb-2 sm:pb-2.5 text-center border-b border-[#F2ECE4] dark:border-slate-700/80 shrink-0">
-          <button
-            type="button"
-            id="protected-action-close-btn"
-            onClick={onClose}
-            disabled={isLoading}
-            className="absolute top-2.5 right-2.5 sm:top-3.5 sm:right-3.5 p-1.5 rounded-lg text-[#8C8377] dark:text-slate-400 hover:text-[#2D2A26] dark:hover:text-white hover:bg-[#FAF8F5] dark:hover:bg-slate-700 transition-colors cursor-pointer disabled:opacity-50"
-            aria-label="Cancel"
-          >
-            <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
+          {dismissable && (
+            <button
+              type="button"
+              id="protected-action-close-btn"
+              onClick={onClose}
+              disabled={isLoading}
+              className="absolute top-2.5 right-2.5 sm:top-3.5 sm:right-3.5 p-1.5 rounded-lg text-[#8C8377] dark:text-slate-400 hover:text-[#2D2A26] dark:hover:text-white hover:bg-[#FAF8F5] dark:hover:bg-slate-700 transition-colors cursor-pointer disabled:opacity-50"
+              aria-label="Cancel"
+            >
+              <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          )}
 
           <div className="w-8 h-8 sm:w-9 sm:h-9 mx-auto rounded-xl bg-[#FBF7F0] dark:bg-amber-950/40 border border-[#F0E4D2] dark:border-amber-800/60 flex items-center justify-center text-amber-600 dark:text-amber-400 mb-1.5 shadow-2xs">
             <Lock className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
@@ -185,10 +189,12 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
 
           <h3 className="text-sm sm:text-base font-serif font-bold text-[#2D2A26] dark:text-white flex items-center justify-center gap-1.5">
             <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 dark:text-amber-400" />
-            <span>Protected Action</span>
+            <span>{dismissable ? 'Protected Action' : 'Vignesh Habit Tracker'}</span>
           </h3>
           <p className="mt-0.5 text-[11px] sm:text-xs text-[#736A5E] dark:text-slate-300 font-medium">
-            Enter your editing password to make changes.
+            {dismissable
+              ? 'Enter your editing password to make changes.'
+              : 'Enter password to access the website.'}
           </p>
           {actionDescription && (
             <p className="mt-1 text-[10px] sm:text-[11px] text-[#5B8266] dark:text-emerald-400 font-semibold bg-[#EBF3EE] dark:bg-emerald-950/40 py-0.5 px-2 rounded-md inline-block max-w-[90%] truncate">
@@ -347,20 +353,24 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
 
           {/* Action Buttons: Cancel and Unlock */}
           <div className="flex items-center gap-2 pt-0.5">
-            <button
-              type="button"
-              id="protected-action-cancel-btn"
-              onClick={onClose}
-              disabled={isLoading}
-              className="flex-1 h-9 sm:h-10 px-3 rounded-lg sm:rounded-xl bg-[#FAF8F5] dark:bg-slate-700 border border-[#E5DFD5] dark:border-slate-600 text-xs font-bold text-[#5C554B] dark:text-slate-200 hover:bg-[#F2ECE4] dark:hover:bg-slate-600 active:scale-95 transition-all cursor-pointer select-none disabled:opacity-50"
-            >
-              Cancel
-            </button>
+            {dismissable && (
+              <button
+                type="button"
+                id="protected-action-cancel-btn"
+                onClick={onClose}
+                disabled={isLoading}
+                className="flex-1 h-9 sm:h-10 px-3 rounded-lg sm:rounded-xl bg-[#FAF8F5] dark:bg-slate-700 border border-[#E5DFD5] dark:border-slate-600 text-xs font-bold text-[#5C554B] dark:text-slate-200 hover:bg-[#F2ECE4] dark:hover:bg-slate-600 active:scale-95 transition-all cursor-pointer select-none disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            )}
             <button
               type="submit"
               id="protected-action-unlock-btn"
               disabled={isLoading || !pin.trim()}
-              className="flex-1 h-9 sm:h-10 px-3 rounded-lg sm:rounded-xl bg-[#5B8266] hover:bg-[#4D7157] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer select-none flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`${
+                dismissable ? 'flex-1' : 'w-full'
+              } h-9 sm:h-10 px-3 rounded-lg sm:rounded-xl bg-[#5B8266] hover:bg-[#4D7157] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer select-none flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               {isLoading ? (
                 <>
@@ -370,7 +380,7 @@ export const ProtectedActionModal: React.FC<ProtectedActionModalProps> = ({
               ) : (
                 <>
                   <KeyRound className="w-3.5 h-3.5" />
-                  <span>Unlock</span>
+                  <span>{dismissable ? 'Unlock' : 'Enter Tracker'}</span>
                 </>
               )}
             </button>

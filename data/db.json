@@ -1,0 +1,368 @@
+{
+  "habits": [
+    {
+      "id": "00a10ca0-1056-4f39-8575-2d8cb59a94be",
+      "name": "Morning Workout & Stretch",
+      "category": "health",
+      "frequency": "daily",
+      "status": "active",
+      "priority": "high",
+      "created_at": "2026-10-11T07:36:23.677Z",
+      "target_count": 1,
+      "schedule_days": [],
+      "archived_at": null,
+      "updated_at": ""
+    },
+    {
+      "id": "5fe289ae-069c-43d5-90a5-1c2166135ba6",
+      "name": "Deep Work Session (2h)",
+      "category": "career",
+      "frequency": "daily",
+      "status": "active",
+      "priority": "high",
+      "created_at": "2026-10-11T07:36:23.677Z",
+      "target_count": 1,
+      "schedule_days": [],
+      "archived_at": null,
+      "updated_at": ""
+    },
+    {
+      "id": "86ab0643-87c4-4f24-87c8-999a60b2d817",
+      "name": "Read 20 Pages",
+      "category": "learning",
+      "frequency": "daily",
+      "status": "active",
+      "priority": "medium",
+      "created_at": "2026-10-11T07:36:23.677Z",
+      "target_count": 1,
+      "schedule_days": [],
+      "archived_at": null,
+      "updated_at": ""
+    },
+    {
+      "id": "ca8fa903-b316-4773-9a89-b6499d476fe3",
+      "name": "Meditation & Mindfulness",
+      "category": "personal",
+      "frequency": "daily",
+      "status": "active",
+      "priority": "medium",
+      "created_at": "2026-10-11T07:36:23.677Z",
+      "target_count": 1,
+      "schedule_days": [],
+      "archived_at": null,
+      "updated_at": ""
+    }
+  ],
+  "habit_entries": [
+    {
+      "id": "05ffe485-d445-4d90-aa27-e53166cd3016",
+      "habit_id": "00a10ca0-1056-4f39-8575-2d8cb59a94be",
+      "date": "2026-10-11",
+      "completed": true,
+      "created_at": "2026-10-11T07:42:51.943Z",
+      "updated_at": ""
+    }
+  ],
+  "reflections": [
+    {
+      "id": "3a788ff1-3a4c-4004-a312-11bb762ec07b",
+      "year": 2026,
+      "month": 10,
+      "content": "Great progress this month!",
+      "created_at": "2026-10-11T07:47:14.579Z"
+    }
+  ],
+  "weekly_reviews": [],
+  "affirmations": [
+    {
+      "id": "d04eb098-2e93-4a5d-9819-e0526374c208",
+      "quote": "Small progress every single day creates massive long-term results.",
+      "author": "Robin Sharma",
+      "image_url": "",
+      "active": true,
+      "created_at": "2026-10-11T07:36:23.677Z",
+      "updated_at": ""
+    }
+  ],
+  "settings": {
+    "0": {
+      "setting_key": 1,
+      "setting_value": {
+        "setting_key": "week_start",
+        "setting_value": "sunday",
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "1": {
+      "setting_key": 2,
+      "setting_value": {
+        "setting_key": "default_view",
+        "setting_value": "today",
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "2": {
+      "setting_key": 3,
+      "setting_value": {
+        "setting_key": "auto_lock_minutes",
+        "setting_value": 15,
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "3": {
+      "setting_key": 4,
+      "setting_value": {
+        "setting_key": "google_sheets_auto_sync",
+        "setting_value": true,
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "4": {
+      "setting_key": 5,
+      "setting_value": {
+        "setting_key": "google_sheets_auto_push",
+        "setting_value": true,
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "5": {
+      "setting_key": 6,
+      "setting_value": {
+        "setting_key": "google_sheets_auto_pull",
+        "setting_value": true,
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "6": {
+      "setting_key": 7,
+      "setting_value": {
+        "setting_key": "google_sheets_auto_reflect",
+        "setting_value": true,
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "7": {
+      "setting_key": 8,
+      "setting_value": {
+        "setting_key": "google_sheets_last_synced",
+        "setting_value": "2026-10-11T07:37:34.631Z",
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "8": {
+      "setting_key": 9,
+      "setting_value": {
+        "setting_key": "google_sheets_last_pushed",
+        "setting_value": "2026-10-11T07:37:24.937Z",
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "9": {
+      "setting_key": 10,
+      "setting_value": {
+        "setting_key": "google_sheets_last_pulled",
+        "setting_value": "2026-10-11T07:37:34.631Z",
+        "updated_at": "2026-10-11T07:44:56.132Z"
+      },
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "10": {
+      "setting_key": "theme",
+      "setting_value": "light",
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "11": {
+      "setting_key": "week_start",
+      "setting_value": "sunday",
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "12": {
+      "setting_key": "default_view",
+      "setting_value": "today",
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "13": {
+      "setting_key": "auto_lock_minutes",
+      "setting_value": 15,
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "14": {
+      "setting_key": "google_sheets_auto_sync",
+      "setting_value": true,
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "15": {
+      "setting_key": "google_sheets_auto_push",
+      "setting_value": true,
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "16": {
+      "setting_key": "google_sheets_auto_pull",
+      "setting_value": true,
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "17": {
+      "setting_key": "google_sheets_auto_reflect",
+      "setting_value": true,
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "18": {
+      "setting_key": "google_sheets_last_synced",
+      "setting_value": "2026-10-11T07:45:11.373Z",
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "19": {
+      "setting_key": "google_sheets_last_pushed",
+      "setting_value": "2026-10-11T07:44:58.553Z",
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "20": {
+      "setting_key": "google_sheets_last_pulled",
+      "setting_value": "2026-10-11T07:45:11.373Z",
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "21": {
+      "setting_key": "setting_key",
+      "setting_value": "google_sheets_last_synced",
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "22": {
+      "setting_key": "setting_value",
+      "setting_value": "2026-10-11T07:44:58.553Z",
+      "updated_at": "2026-10-11T07:45:34.865Z"
+    },
+    "theme": "light",
+    "week_start": "sunday",
+    "default_view": "today",
+    "auto_lock_minutes": 15,
+    "google_sheets_auto_sync": true,
+    "google_sheets_auto_push": true,
+    "google_sheets_auto_pull": true,
+    "google_sheets_auto_reflect": true,
+    "google_sheets_last_synced": "2026-10-11T07:45:50.549Z",
+    "google_sheets_last_pushed": "2026-10-11T07:45:37.208Z",
+    "google_sheets_last_pulled": "2026-10-11T07:45:50.549Z",
+    "setting_key": "google_sheets_last_pushed",
+    "setting_value": "2026-10-11T07:45:37.208Z"
+  },
+  "habit_categories": [
+    {
+      "id": "9b0dfae8-7c84-45cc-8da6-d87f7f045f4f",
+      "name": "Health",
+      "icon": "🏃",
+      "created_at": "2026-10-11T07:36:23.677Z"
+    },
+    {
+      "id": "ab1713ed-a97f-4613-91c0-d52108936dd5",
+      "name": "Career",
+      "icon": "💼",
+      "created_at": "2026-10-11T07:36:23.677Z"
+    },
+    {
+      "id": "11366fb8-0ee1-4f58-83dc-5586d68484f3",
+      "name": "Learning",
+      "icon": "📚",
+      "created_at": "2026-10-11T07:36:23.677Z"
+    },
+    {
+      "id": "48c4af22-227f-4439-9e77-b17bd2085916",
+      "name": "Personal",
+      "icon": "🧘",
+      "created_at": "2026-10-11T07:36:23.677Z"
+    },
+    {
+      "id": "9626298f-72b9-4675-ab36-d9816c773766",
+      "name": "Finance",
+      "icon": "💰",
+      "created_at": "2026-10-11T07:36:23.677Z"
+    },
+    {
+      "id": "e8f27263-7c77-412b-86c5-91bb8b7a92a1",
+      "name": "General",
+      "icon": "✨",
+      "created_at": "2026-10-11T07:36:23.677Z"
+    }
+  ],
+  "goals": [
+    {
+      "id": "d6c1a062-7513-4985-9904-6460de1caa1a",
+      "title": "Run 10km Marathon",
+      "description": "Build cardiovascular endurance and hit 10k pace",
+      "category": "health",
+      "target_date": "2026-12-31",
+      "progress": 45,
+      "status": "active",
+      "created_at": "2026-10-11T07:36:23.677Z",
+      "updated_at": ""
+    },
+    {
+      "id": "d5c7d1d0-e1eb-4484-8297-5e1bfb1fd883",
+      "title": "Read 12 Non-Fiction Books",
+      "description": "Expand knowledge across science, philosophy, and productivity",
+      "category": "learning",
+      "target_date": "2026-12-31",
+      "progress": 60,
+      "status": "active",
+      "created_at": "2026-10-11T07:36:23.677Z",
+      "updated_at": ""
+    },
+    {
+      "id": "ffd21a70-dc6c-4164-8ad9-eb228bb38d6a",
+      "title": "Run 10km Marathon",
+      "category": "health",
+      "description": "Build cardiovascular endurance and hit 10k pace",
+      "target_date": "2026-12-31",
+      "progress": 45,
+      "status": "active",
+      "created_at": "2026-10-11T06:58:35.307Z",
+      "updated_at": ""
+    },
+    {
+      "id": "de1d943e-4d39-454a-b10f-ad56f08c32cd",
+      "title": "Read 12 Non-Fiction Books",
+      "category": "learning",
+      "description": "Expand knowledge across science, philosophy, and productivity",
+      "target_date": "2026-12-31",
+      "progress": 60,
+      "status": "active",
+      "created_at": "2026-10-11T06:58:35.307Z",
+      "updated_at": ""
+    }
+  ],
+  "daily_journal": [],
+  "weekly_plans": [
+    {
+      "id": "5276589c-a02e-4cba-9252-68095606218c",
+      "year": 2026,
+      "month": 10,
+      "week_number": 1,
+      "main_goal": "Ship feature",
+      "priority_1": "Task A",
+      "priority_2": "Task B",
+      "priority_3": "Task C",
+      "target_percentage": 80,
+      "created_at": "2026-10-11T07:47:14.583Z"
+    }
+  ],
+  "mood_tracker": [
+    {
+      "id": "b11c2e04-12e6-4f14-8010-0e0fca9d65c0",
+      "date": "2026-10-11",
+      "mood": "energized",
+      "mood_score": 5,
+      "energy_level": 4,
+      "note": "Feeling awesome",
+      "created_at": "2026-10-11T07:45:10.484Z",
+      "updated_at": "2026-10-11T07:47:14.575Z"
+    }
+  ]
+}

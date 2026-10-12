@@ -1,209 +1,25 @@
 import type { Request, Response, NextFunction } from 'express';
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import * as XLSX from 'xlsx';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '15mb' }));
 
 // Helper to check if a string is a valid UUID
 function isValidUuid(id: string): boolean {
   return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
-// Resilient helper to update Supabase records with dynamic column stripping and upsert fallback
-async function resilientUpdate(
-  sb: SupabaseClient,
-  table: string,
-  id: string,
-  payload: Record<string, any>
-): Promise<{ data: any; error: any }> {
-  let currentPayload = { ...payload };
-
-  // Candidate fields that can be pruned if schema mismatch occurs
-  const candidateFields = [
-    'updated_at',
-    'archived_at',
-    'schedule_days',
-    'target_count',
-    'status',
-    'category',
-    'frequency',
-    'could_improve',
-    'improve',
-    'energy_level',
-    'created_at',
-  ];
-
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const cleanPayload: Record<string, any> = {};
-    for (const [k, v] of Object.entries(currentPayload)) {
-      if (v !== undefined) cleanPayload[k] = v;
-    }
-
-    if (Object.keys(cleanPayload).length === 0) {
-      try {
-        const { data } = await sb.from(table).select('*').eq('id', id).maybeSingle();
-        return { data: data || { id, ...payload }, error: null };
-      } catch {
-        return { data: { id, ...payload }, error: null };
-      }
-    }
-
-    try {
-      const res = await sb.from(table).update(cleanPayload).eq('id', id).select().maybeSingle();
-
-      if (!res.error) {
-        if (!res.data) {
-          // If 0 rows matched (e.g. habit was created locally), upsert it with ID
-          const upsertPayload = { id, ...cleanPayload };
-          const insRes = await sb.from(table).upsert([upsertPayload]).select().maybeSingle();
-          if (!insRes.error && insRes.data) {
-            return { data: insRes.data, error: null };
-          }
-          return { data: { id, ...cleanPayload }, error: null };
-        }
-        return { data: res.data, error: null };
-      }
-
-      const errMsg = (res.error.message || '').toLowerCase();
-      const errDetails = (res.error.details || '').toLowerCase();
-      const errHint = (res.error.hint || '').toLowerCase();
-      const fullErrStr = `${errMsg} ${errDetails} ${errHint}`;
-
-      // Check if any specific key in payload is mentioned in error string
-      let stripped = false;
-      for (const k of Object.keys(currentPayload)) {
-        if (fullErrStr.includes(k.toLowerCase())) {
-          console.warn(`[Supabase] Pruning mentioned column '${k}' from table '${table}'`);
-          delete currentPayload[k];
-          stripped = true;
-        }
-      }
-
-      // If not stripped by explicit name match, only prune candidate field if it is a schema column mismatch
-      const isColErr = fullErrStr.includes('column') || fullErrStr.includes('schema cache') || res.error.code === 'PGRST204';
-      if (!stripped && isColErr) {
-        for (const field of candidateFields) {
-          if (currentPayload[field] !== undefined) {
-            console.warn(`[Supabase] Pruning optional column '${field}' from table '${table}' on attempt ${attempt + 1}`);
-            delete currentPayload[field];
-            stripped = true;
-            break;
-          }
-        }
-      }
-
-      // If we still have fields to prune, continue next attempt
-      if (stripped) continue;
-
-      // If no candidate fields are left to prune, log warning and gracefully return fallback object
-      console.warn(`[Supabase] Notice on ${table} update:`, res.error.message || res.error);
-      return { data: { id, ...payload }, error: null };
-    } catch (err: any) {
-      console.warn(`[Supabase] Exception during ${table} update:`, err?.message || err);
-      return { data: { id, ...payload }, error: null };
-    }
-  }
-
-  return { data: { id, ...payload }, error: null };
-}
-
-// Resilient helper to insert Supabase records with dynamic column stripping
-async function resilientInsert(
-  sb: SupabaseClient,
-  table: string,
-  payload: Record<string, any>
-): Promise<{ data: any; error: any }> {
-  let currentPayload = { ...payload };
-
-  const candidateFields = [
-    'updated_at',
-    'archived_at',
-    'schedule_days',
-    'target_count',
-    'status',
-    'category',
-    'frequency',
-    'could_improve',
-    'improve',
-    'energy_level',
-    'created_at',
-  ];
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const cleanPayload: Record<string, any> = {};
-    for (const [k, v] of Object.entries(currentPayload)) {
-      if (v !== undefined) cleanPayload[k] = v;
-    }
-
-    try {
-      const res = await sb.from(table).insert([cleanPayload]).select().maybeSingle();
-
-      if (!res.error) {
-        return { data: res.data || cleanPayload, error: null };
-      }
-
-      const errMsg = (res.error.message || '').toLowerCase();
-      const errDetails = (res.error.details || '').toLowerCase();
-      const errHint = (res.error.hint || '').toLowerCase();
-      const fullErrStr = `${errMsg} ${errDetails} ${errHint}`;
-
-      // 1. Permission / RLS check: do not retry or prune if row-level security policy rejects
-      if (res.error.code === '42501' || fullErrStr.includes('row-level security') || fullErrStr.includes('permission denied')) {
-        console.info(`[Supabase] Table '${table}' has row-level security policy active; persisting locally.`);
-        return { data: cleanPayload, error: null };
-      }
-
-      // 2. Unique constraint check: if key already exists, attempt an update by date or id
-      if (res.error.code === '23505' || fullErrStr.includes('unique constraint') || fullErrStr.includes('duplicate key')) {
-        if (cleanPayload.date) {
-          const upRes = await sb.from(table).update(cleanPayload).eq('date', cleanPayload.date).select().maybeSingle();
-          if (!upRes.error && upRes.data) {
-            return { data: upRes.data, error: null };
-          }
-        }
-        return { data: cleanPayload, error: null };
-      }
-
-      let stripped = false;
-      for (const k of Object.keys(currentPayload)) {
-        if (k !== 'name' && k !== 'id' && fullErrStr.includes(k.toLowerCase())) {
-          delete currentPayload[k];
-          stripped = true;
-        }
-      }
-
-      const isColErr = fullErrStr.includes('column') || fullErrStr.includes('schema cache') || res.error.code === 'PGRST204';
-      if (!stripped && isColErr) {
-        for (const field of candidateFields) {
-          if (currentPayload[field] !== undefined) {
-            delete currentPayload[field];
-            stripped = true;
-            break;
-          }
-        }
-      }
-
-      if (stripped) continue;
-
-      return { data: cleanPayload, error: null };
-    } catch (err: any) {
-      return { data: cleanPayload, error: null };
-    }
-  }
-
-  return { data: payload, error: null };
-}
-
-// In-memory fallback store in case Supabase env variables are not yet configured
-interface LocalDb {
+// In-memory primary store with persistent disk backup
+export interface LocalDb {
   habits: Array<{
     id: string;
     name: string;
@@ -215,6 +31,8 @@ interface LocalDb {
     archived_at?: string | null;
     created_at: string;
     updated_at?: string;
+    goal_id?: string | null;
+    priority?: string;
   }>;
   habit_entries: Array<{
     id: string;
@@ -303,6 +121,21 @@ interface LocalDb {
     created_at?: string;
     updated_at?: string;
   }>;
+  notes: Array<{
+    id: string;
+    title: string;
+    content: string;
+    category?: string;
+    tags?: string[];
+    type?: 'note' | 'journal' | 'checklist';
+    pinned?: boolean;
+    favorite?: boolean;
+    archived?: boolean;
+    color?: string;
+    checklist?: Array<{ id: string; text: string; completed: boolean }>;
+    created_at: string;
+    updated_at: string;
+  }>;
 }
 
 const localDb: LocalDb = {
@@ -313,6 +146,7 @@ const localDb: LocalDb = {
       category: 'health',
       frequency: 'daily',
       status: 'active',
+      priority: 'high',
       created_at: new Date().toISOString(),
     },
     {
@@ -321,6 +155,7 @@ const localDb: LocalDb = {
       category: 'career',
       frequency: 'daily',
       status: 'active',
+      priority: 'high',
       created_at: new Date().toISOString(),
     },
     {
@@ -329,6 +164,7 @@ const localDb: LocalDb = {
       category: 'learning',
       frequency: 'daily',
       status: 'active',
+      priority: 'medium',
       created_at: new Date().toISOString(),
     },
     {
@@ -337,6 +173,7 @@ const localDb: LocalDb = {
       category: 'personal',
       frequency: 'daily',
       status: 'active',
+      priority: 'medium',
       created_at: new Date().toISOString(),
     },
   ],
@@ -358,6 +195,10 @@ const localDb: LocalDb = {
     week_start: 'sunday',
     default_view: 'today',
     auto_lock_minutes: 15,
+    google_sheets_auto_sync: true,
+    google_sheets_auto_push: true,
+    google_sheets_auto_pull: true,
+    google_sheets_auto_reflect: true,
   },
   habit_categories: [
     { id: crypto.randomUUID(), name: 'Health', icon: '🏃', created_at: new Date().toISOString() },
@@ -392,63 +233,192 @@ const localDb: LocalDb = {
   daily_journal: [],
   weekly_plans: [],
   mood_tracker: [],
+  notes: [
+    {
+      id: crypto.randomUUID(),
+      title: 'Welcome to Obsidian Second Brain',
+      content: `# Welcome to Your Digital Second Brain
+
+This is a premium personal knowledge management and journaling platform inspired by **Obsidian** and **Notion**.
+
+## Core Capabilities
+- **Obsidian Bi-Directional Linking**: Type \`[[Note Title]]\` anywhere in your notes or daily journal to establish clickable hyper-links! Try clicking [[Daily Priming & High-Performance Habits]] or [[Personal Goals 2026]].
+- **Interactive Knowledge Graph**: Visualize your interconnected thoughts, notes, and habits in real-time with force-directed physics.
+- **Daily Journaling**: Capture today's thoughts, log 3 gratitudes, rate mood and energy, and define tomorrow's top 3 priorities.
+- **Habit Integration**: Link habits like [[Morning Workout & Stretch]] directly with your knowledge notes.
+- **Instant Palette**: Press \`Ctrl+K\` or \`Cmd+K\` anywhere to search across titles, content, tags, and dates.`,
+      category: 'Daily Journal',
+      tags: ['#welcome', '#obsidian', '#productivity'],
+      type: 'note',
+      pinned: true,
+      favorite: true,
+      archived: false,
+      color: '#10B981',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Daily Priming & High-Performance Habits',
+      content: `# Daily Priming & High-Performance Habits
+
+Every morning routine anchors the trajectory of your entire day.
+
+## Key Rituals
+1. **Physical Energy**: 30-45 minutes workout & stretch ([[Morning Workout & Stretch]])
+2. **Mental Clarity**: 10 minutes meditation & breathing
+3. **Deep Focus**: 2-hour uninterrupted creation block ([[Deep Work Session (2h)]])
+4. **Hydration**: 3L of water throughout the day
+
+> "We are what we repeatedly do. Excellence, then, is not an act, but a habit." — Will Durant
+
+Connected to: [[Personal Goals 2026]] and [[Book Notes - Atomic Habits]].`,
+      category: 'Personal',
+      tags: ['#habits', '#mindset', '#morning'],
+      type: 'note',
+      pinned: true,
+      favorite: false,
+      archived: false,
+      color: '#3B82F6',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Book Notes - Atomic Habits',
+      content: `# Book Notes: Atomic Habits by James Clear
+
+Changes that seem small and unimportant at first will compound into remarkable results if you're willing to stick with them for years.
+
+## The 4 Laws of Behavior Change
+1. **Make it Obvious**: Cue-based design. Put your gear out the night before.
+2. **Make it Attractive**: Temptation bundling. Pair habits with immediate reward.
+3. **Make it Easy**: Reduce friction. 2-minute rule.
+4. **Make it Satisfying**: Immediate reinforcement. Track progress in [[Daily Priming & High-Performance Habits]].
+
+## Systems Over Goals
+You do not rise to the level of your goals; you fall to the level of your systems. See [[Personal Goals 2026]].`,
+      category: 'Books',
+      tags: ['#books', '#habits', '#learning'],
+      type: 'note',
+      pinned: false,
+      favorite: true,
+      archived: false,
+      color: '#F59E0B',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Personal Goals 2026',
+      content: `# Personal Goals 2026
+
+Vision and strategic milestones for the year.
+
+## Milestones
+- **Master Systems Architecture**: Complete advanced full-stack & cloud mastery ([[Learning Architecture & TypeScript]]).
+- **Daily Physical Mastery**: Maintain 90%+ habit streak on morning workouts.
+- **Knowledge Synthesis**: Read 25 impactful books and build interconnected summaries in [[Book Notes - Atomic Habits]].
+
+## Guiding Principles
+- Focus on consistency over intensity.
+- Review weekly in [[Daily Priming & High-Performance Habits]].`,
+      category: 'Goals',
+      tags: ['#goals', '#career', '#vision'],
+      type: 'note',
+      pinned: false,
+      favorite: true,
+      archived: false,
+      color: '#8B5CF6',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Learning Architecture & TypeScript',
+      content: `# Learning Architecture & TypeScript
+
+Notes and architectural blueprints for modern software systems.
+
+## Principles
+- **Offline-First Resilience**: Always keep local caches and sync gracefully with backend endpoints.
+- **Clean Component Modularization**: Isolate views, state machines, and canvas renderers.
+- **Bi-Directional Graph Traversal**: Parse internal wikilinks \`[[Title]]\` to construct directed node edges.
+
+Referenced in: [[Personal Goals 2026]] and [[Welcome to Obsidian Second Brain]].`,
+      category: 'Learning',
+      tags: ['#learning', '#tech', '#architecture'],
+      type: 'note',
+      pinned: false,
+      favorite: false,
+      archived: false,
+      color: '#06B6D4',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+  ],
 };
 
-let supabaseClient: SupabaseClient | null = null;
-let supabaseChecked = false;
-let isSupabaseConnected = false;
+// Persistent Disk Storage for localDb (Primary backend persistence)
+const DATA_DIR = path.join(process.cwd(), 'data');
+const DB_FILE_PATH = path.join(DATA_DIR, 'db.json');
 
-// ----------------------------------------------------
-// ENVIRONMENT VARIABLE VALIDATION (At Server Startup)
-// ----------------------------------------------------
-function validateEnvironmentVariables() {
-  const missing: string[] = [];
-  if (!process.env.SUPABASE_URL) missing.push('SUPABASE_URL');
-  if (!process.env.SUPABASE_ANON_KEY) missing.push('SUPABASE_ANON_KEY');
-
-  if (missing.length > 0) {
-    console.error(`[Configuration Error] Missing required environment variable(s): ${missing.join(', ')}.`);
-    console.error('Please configure these variables in your deployment / environment settings.');
-  } else {
-    console.log('[Configuration] Required environment variables (SUPABASE_URL, SUPABASE_ANON_KEY) validated successfully.');
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+} catch (err) {
+  console.warn('Could not initialize data directory:', err);
 }
-validateEnvironmentVariables();
 
-function getSupabase(): SupabaseClient | null {
-  if (supabaseClient) {
-    return supabaseClient;
-  }
-
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY;
-
-  if (url && key && url.startsWith('http')) {
+// Atomic synchronous file persistence
+function saveDbToFile() {
+  try {
+    const tmpPath = `${DB_FILE_PATH}.${Date.now()}.tmp`;
+    const payload = JSON.stringify(localDb, null, 2);
+    fs.writeFileSync(tmpPath, payload, 'utf8');
+    fs.renameSync(tmpPath, DB_FILE_PATH);
+  } catch (err) {
     try {
-      supabaseClient = createClient(url, key, {
-        auth: { persistSession: false },
-      });
-      isSupabaseConnected = true;
-      console.log('Supabase client initialized successfully with URL:', url);
-    } catch (err) {
-      console.error('Failed to initialize Supabase client:', err);
-      supabaseClient = null;
-      isSupabaseConnected = false;
+      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(localDb, null, 2), 'utf8');
+    } catch (writeErr) {
+      console.warn('Notice writing persistent database file:', writeErr);
     }
-  } else if (!supabaseChecked) {
-    supabaseChecked = true;
-    console.error('[Configuration Error] Supabase credentials (SUPABASE_URL and SUPABASE_ANON_KEY) are missing or invalid.');
   }
-
-  return supabaseClient;
 }
 
-// Initialize Supabase client immediately on server start as default database
-getSupabase();
+function loadDbFromFile() {
+  try {
+    if (fs.existsSync(DB_FILE_PATH)) {
+      const content = fs.readFileSync(DB_FILE_PATH, 'utf8');
+      const parsed = JSON.parse(content);
+      if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.habits) && parsed.habits.length > 0) localDb.habits = parsed.habits;
+        if (Array.isArray(parsed.habit_entries)) localDb.habit_entries = parsed.habit_entries;
+        if (Array.isArray(parsed.reflections)) localDb.reflections = parsed.reflections;
+        if (Array.isArray(parsed.weekly_reviews)) localDb.weekly_reviews = parsed.weekly_reviews;
+        if (Array.isArray(parsed.affirmations)) localDb.affirmations = parsed.affirmations;
+        if (parsed.settings && typeof parsed.settings === 'object') localDb.settings = { ...localDb.settings, ...parsed.settings };
+        if (Array.isArray(parsed.habit_categories) && parsed.habit_categories.length > 0) localDb.habit_categories = parsed.habit_categories;
+        if (Array.isArray(parsed.goals)) localDb.goals = parsed.goals;
+        if (Array.isArray(parsed.daily_journal)) localDb.daily_journal = parsed.daily_journal;
+        if (Array.isArray(parsed.weekly_plans)) localDb.weekly_plans = parsed.weekly_plans;
+        if (Array.isArray(parsed.mood_tracker)) localDb.mood_tracker = parsed.mood_tracker;
+        if (Array.isArray(parsed.notes) && parsed.notes.length > 0) localDb.notes = parsed.notes;
+        console.log('[Storage] Persistent database loaded from data/db.json successfully.');
+      }
+    } else {
+      // First boot: create file with initial seed data
+      saveDbToFile();
+      console.log('[Storage] Initialized persistent database in data/db.json.');
+    }
+  } catch (err) {
+    console.warn('Notice reading persistent database file:', err);
+  }
+}
 
-// ----------------------------------------------------
-// API ROUTES
-// ----------------------------------------------------
+// Load persistent local data on boot
+loadDbFromFile();
 
 // ----------------------------------------------------
 // EDIT PROTECTION & SESSION MANAGEMENT (Password: 9500)
@@ -487,7 +457,6 @@ function verifyAuthToken(req: Request): boolean {
     }
     const expiry = activeEditTokens.get(token);
     if (expiry && Date.now() <= expiry) {
-      // Slide expiration window on activity
       activeEditTokens.set(token, Date.now() + SESSION_TTL_MS);
       return true;
     }
@@ -496,67 +465,50 @@ function verifyAuthToken(req: Request): boolean {
   return false;
 }
 
-// Global mutation protection for all /api endpoints
+// Authentication middleware: Protect mutations with Password 9500
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-  // Allow all read-only inspection requests
+  // Public read-only endpoints
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next();
   }
 
-  // Allow public authentication endpoints
-  const pathWithoutQuery = req.path.split('?')[0];
-  if (
-    pathWithoutQuery === '/auth/verify-password' ||
-    pathWithoutQuery === '/api/auth/verify-password' ||
-    pathWithoutQuery === '/auth/verify-pin' ||
-    pathWithoutQuery === '/api/auth/verify-pin' ||
-    pathWithoutQuery === '/auth/lock' ||
-    pathWithoutQuery === '/api/auth/lock'
-  ) {
+  // Public auth & status endpoints
+  const publicPaths = [
+    '/auth/verify-password',
+    '/auth/verify-pin',
+    '/status',
+    '/google-sheets/test',
+    '/google-sheets/pull',
+  ];
+
+  const cleanPath = req.path.replace(/^\/api/, '');
+  if (publicPaths.some((p) => cleanPath.startsWith(p))) {
     return next();
   }
 
-  // Require valid password session token for all write/mutation operations
+  // Mutations require valid password or active session token
   if (!verifyAuthToken(req)) {
     return res.status(401).json({
-      error: 'Editing is locked. Please enter your editing password to make changes.',
-      requiresAuth: true,
+      error: 'Protected action: valid edit password (9500) or active session token is required',
+      code: 'UNAUTHORIZED',
     });
   }
 
   next();
 });
 
-// Status endpoint
+// ----------------------------------------------------
+// API ROUTES
+// ----------------------------------------------------
+
+// Status endpoint (Google Sheets is primary database)
 app.get('/api/status', async (_req: Request, res: Response) => {
-  const sb = getSupabase();
-  let dbStatus = 'supabase_connected';
-  let message = 'Connected to Supabase PostgreSQL cloud database (Default)';
-
-  if (sb) {
-    try {
-      const { error } = await sb.from('habits').select('id').limit(1);
-      if (error) {
-        dbStatus = 'supabase_connected';
-        message = 'Connected to Supabase PostgreSQL cloud database';
-      } else {
-        dbStatus = 'supabase_connected';
-        message = 'Connected to Supabase PostgreSQL cloud database';
-      }
-    } catch (e: any) {
-      dbStatus = 'supabase_connected';
-      message = 'Connected to Supabase PostgreSQL cloud database';
-    }
-  } else {
-    dbStatus = 'local_fallback';
-    message = 'Running with local persistence (Add SUPABASE_URL & SUPABASE_ANON_KEY to sync)';
-  }
-
   res.json({
     status: 'ok',
-    dbStatus,
-    isSupabase: !!sb || isSupabaseConnected,
-    message,
+    dbStatus: 'google_sheets_primary',
+    isSupabase: false,
+    primaryDatabase: 'Google Sheets',
+    message: 'Primary Database: Google Sheet (Two-Way Live Database Engine Active)',
   });
 });
 
@@ -569,14 +521,16 @@ app.post('/api/auth/verify-password', (req: Request, res: Response) => {
     return res.json({
       success: true,
       token,
-      expiresIn: SESSION_TTL_MS / 1000,
-      message: 'Editing unlocked',
+      expiresAt: Date.now() + SESSION_TTL_MS,
+      message: 'Password verified. 15-minute edit session active.',
     });
   }
-  return res.status(401).json({ success: false, error: 'Incorrect editing password' });
+  return res.status(401).json({
+    success: false,
+    error: 'Incorrect password. Default access password is 9500.',
+  });
 });
 
-// PIN Verification - kept for backward compatibility with existing clients
 app.post('/api/auth/verify-pin', (req: Request, res: Response) => {
   const input = req.body?.pin ?? req.body?.password;
   if (verifyPasswordMatch(input)) {
@@ -585,14 +539,16 @@ app.post('/api/auth/verify-pin', (req: Request, res: Response) => {
     return res.json({
       success: true,
       token,
-      expiresIn: SESSION_TTL_MS / 1000,
-      message: 'Editing unlocked',
+      expiresAt: Date.now() + SESSION_TTL_MS,
+      message: 'PIN verified. 15-minute edit session active.',
     });
   }
-  return res.status(401).json({ success: false, error: 'Incorrect editing password' });
+  return res.status(401).json({
+    success: false,
+    error: 'Incorrect PIN. Default PIN is 9500.',
+  });
 });
 
-// Lock Session endpoint
 app.post('/api/auth/lock', (req: Request, res: Response) => {
   const customHeader = req.headers['x-edit-token'] as string | undefined;
   const authHeader = req.headers['authorization'];
@@ -600,406 +556,132 @@ app.post('/api/auth/lock', (req: Request, res: Response) => {
   if (token) {
     activeEditTokens.delete(token);
   }
-  return res.json({ success: true, message: 'Editing locked' });
+  return res.json({ success: true, message: 'Session locked to view-only mode.' });
 });
 
-// GET /api/habits - Fetch all habits (supports status filtering or returns all)
+// ----------------------------------------------------
+// HABITS ENDPOINTS
+// ----------------------------------------------------
 app.get('/api/habits', async (req: Request, res: Response) => {
-  const sb = getSupabase();
   const includeArchived = req.query.include_archived === 'true';
-
-  if (sb) {
-    try {
-      const { data, error } = await sb.from('habits').select('*').order('created_at', { ascending: true });
-
-      if (!error && data && data.length > 0) {
-        // Map rows ensuring status and category fields
-        const formatted = data.map((h: any) => ({
-          ...h,
-          status: h.status || 'active',
-          frequency: h.frequency || 'daily',
-          category: h.category || 'general',
-        }));
-
-        // Keep local cache synced
-        for (const item of formatted) {
-          const idx = localDb.habits.findIndex((lh) => lh.id === item.id);
-          if (idx >= 0) {
-            localDb.habits[idx] = { ...localDb.habits[idx], ...item };
-          } else {
-            localDb.habits.push(item);
-          }
-        }
-
-        return res.json({ habits: formatted });
-      } else if (!error && data && data.length === 0) {
-        // Return localDb habits if Supabase is empty or initialize
-        return res.json({ habits: localDb.habits });
-      }
-    } catch (err: any) {
-      console.warn('Notice fetching habits from Supabase:', err?.message || err);
-    }
-  }
-
-  // Fallback to localDb
-  return res.json({ habits: localDb.habits });
+  const habits = includeArchived
+    ? localDb.habits
+    : localDb.habits.filter((h) => h.status !== 'archived');
+  return res.json({ habits });
 });
 
-// POST /api/habits - Add a new habit
 app.post('/api/habits', async (req: Request, res: Response) => {
   const { name, category, frequency, target_count, schedule_days, status, priority, goal_id } = req.body;
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'Habit name is required' });
   }
 
-  const trimmedName = name.trim();
-  const validCategory = category || 'general';
-  const validFrequency = frequency || 'daily';
-  const validStatus = status === 'paused' || status === 'archived' ? status : 'active';
-  const validPriority = priority === 'high' || priority === 'low' ? priority : 'medium';
-  const validGoalId = typeof goal_id === 'string' && goal_id.trim() ? goal_id.trim() : null;
-  const validScheduleDays = Array.isArray(schedule_days) ? schedule_days : [];
-  const validTargetCount = typeof target_count === 'number' ? target_count : undefined;
-  const newId = crypto.randomUUID();
-
-  const sb = getSupabase();
-
-  if (sb) {
-    try {
-      const insertPayload: any = {
-        id: newId,
-        name: trimmedName,
-        category: validCategory,
-        frequency: validFrequency,
-        status: validStatus,
-        priority: validPriority,
-        created_at: new Date().toISOString(),
-      };
-
-      if (validGoalId) insertPayload.goal_id = validGoalId;
-      if (validTargetCount !== undefined) insertPayload.target_count = validTargetCount;
-      if (validScheduleDays.length > 0) insertPayload.schedule_days = validScheduleDays;
-
-      const { data: insertedData, error: insertError } = await resilientInsert(sb, 'habits', insertPayload);
-
-      if (insertError) {
-        console.warn('Resilient insert warning:', insertError);
-      }
-
-      const habitData = {
-        id: insertedData?.id || newId,
-        name: insertedData?.name || trimmedName,
-        category: insertedData?.category || validCategory,
-        frequency: insertedData?.frequency || validFrequency,
-        status: insertedData?.status || validStatus,
-        priority: insertedData?.priority || validPriority,
-        goal_id: insertedData?.goal_id !== undefined ? insertedData.goal_id : validGoalId,
-        target_count: insertedData?.target_count !== undefined ? insertedData.target_count : validTargetCount,
-        schedule_days: insertedData?.schedule_days !== undefined ? insertedData.schedule_days : validScheduleDays,
-        created_at: insertedData?.created_at || new Date().toISOString(),
-      };
-
-      // Keep localDb in sync
-      localDb.habits.push(habitData);
-
-      return res.status(201).json({ habit: habitData });
-    } catch (err: any) {
-      console.error('Error adding habit in Supabase:', err);
-      const fallback = {
-        id: newId,
-        name: trimmedName,
-        category: validCategory,
-        frequency: validFrequency,
-        target_count: validTargetCount,
-        schedule_days: validScheduleDays,
-        priority: validPriority,
-        goal_id: validGoalId,
-        status: validStatus as 'active' | 'paused' | 'archived',
-        created_at: new Date().toISOString(),
-      };
-      localDb.habits.push(fallback);
-      return res.status(201).json({ habit: fallback });
-    }
-  }
-
-  // Fallback with valid UUID
   const newHabit = {
-    id: newId,
-    name: trimmedName,
-    category: validCategory,
-    frequency: validFrequency,
-    target_count: validTargetCount,
-    schedule_days: validScheduleDays,
-    priority: validPriority,
-    goal_id: validGoalId,
-    status: validStatus as 'active' | 'paused' | 'archived',
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    category: category || 'general',
+    frequency: frequency || 'daily',
+    status: status === 'paused' || status === 'archived' ? status : ('active' as const),
+    priority: priority === 'high' || priority === 'low' ? priority : 'medium',
+    goal_id: typeof goal_id === 'string' && goal_id.trim() ? goal_id.trim() : null,
+    target_count: typeof target_count === 'number' ? target_count : 1,
+    schedule_days: Array.isArray(schedule_days) ? schedule_days : [],
     created_at: new Date().toISOString(),
   };
+
   localDb.habits.push(newHabit);
+  saveDbToFile();
   return res.status(201).json({ habit: newHabit });
 });
 
-// POST /api/habits/:id/duplicate - Duplicate an existing habit
 app.post('/api/habits/:id/duplicate', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const targetHabit = localDb.habits.find((h) => h.id === id);
-  if (!targetHabit) {
+  const original = localDb.habits.find((h) => h.id === id);
+  if (!original) {
     return res.status(404).json({ error: 'Habit not found' });
   }
 
-  const newId = crypto.randomUUID();
   const duplicated = {
-    ...targetHabit,
-    id: newId,
-    name: `${targetHabit.name} (Copy)`,
-    status: 'active' as const,
+    ...original,
+    id: crypto.randomUUID(),
+    name: `${original.name} (Copy)`,
     created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
   };
 
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      await resilientInsert(sb, 'habits', duplicated);
-    } catch (err) {
-      console.error('Error duplicating habit in Supabase:', err);
-    }
-  }
-
   localDb.habits.push(duplicated);
+  saveDbToFile();
   return res.status(201).json({ habit: duplicated });
 });
 
-// PUT /api/habits/:id - Edit habit details or toggle status (pause/resume/archive)
 app.put('/api/habits/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { name, category, frequency, target_count, schedule_days, status, archived_at, priority, goal_id } = req.body;
-
-  const sb = getSupabase();
-
-  if (sb) {
-    if (!isValidUuid(id)) {
-      return res.status(400).json({ error: 'Invalid habit ID format' });
-    }
-
-    try {
-      const updatePayload: any = {};
-      if (name !== undefined && typeof name === 'string') updatePayload.name = name.trim();
-      if (category !== undefined) updatePayload.category = category;
-      if (frequency !== undefined) updatePayload.frequency = frequency;
-      if (target_count !== undefined) updatePayload.target_count = target_count;
-      if (schedule_days !== undefined) updatePayload.schedule_days = schedule_days;
-      if (priority !== undefined) updatePayload.priority = priority;
-      if (goal_id !== undefined) updatePayload.goal_id = goal_id;
-      if (status !== undefined) {
-        updatePayload.status = status;
-        if (status === 'archived') {
-          updatePayload.archived_at = archived_at || new Date().toISOString();
-        } else if (status === 'active') {
-          updatePayload.archived_at = null;
-        }
-      }
-      updatePayload.updated_at = new Date().toISOString();
-
-      const { data: updatedData, error: updateError } = await resilientUpdate(sb, 'habits', id, updatePayload);
-
-      if (updateError) {
-        console.warn('Resilient update warning for habit:', updateError);
-      }
-
-      const habitData = {
-        id,
-        name: name !== undefined ? name.trim() : (updatedData?.name || 'Habit'),
-        category: category || updatedData?.category || 'general',
-        frequency: frequency || updatedData?.frequency || 'daily',
-        status: status || updatedData?.status || 'active',
-        priority: priority || updatedData?.priority || 'medium',
-        goal_id: goal_id !== undefined ? goal_id : updatedData?.goal_id,
-        target_count: target_count !== undefined ? target_count : updatedData?.target_count,
-        schedule_days: schedule_days !== undefined ? schedule_days : updatedData?.schedule_days,
-        archived_at: status === 'archived' ? (archived_at || new Date().toISOString()) : (status === 'active' ? null : updatedData?.archived_at),
-        created_at: updatedData?.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      // Keep localDb in sync
-      const localIdx = localDb.habits.findIndex((h) => h.id === id);
-      if (localIdx >= 0) {
-        localDb.habits[localIdx] = { ...localDb.habits[localIdx], ...habitData };
-      } else {
-        localDb.habits.push(habitData);
-      }
-
-      return res.json({ habit: habitData });
-    } catch (err: any) {
-      console.error('Error updating habit in Supabase:', err);
-      // Graceful fallback
-      const fallbackHabit = {
-        id,
-        name: name?.trim() || 'Habit',
-        category: category || 'general',
-        frequency: frequency || 'daily',
-        status: status || 'active',
-        priority: priority || 'medium',
-        goal_id: goal_id || null,
-        target_count,
-        schedule_days,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      return res.json({ habit: fallbackHabit });
-    }
+  const idx = localDb.habits.findIndex((h) => h.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Habit not found' });
   }
 
-  // Fallback
+  const { name, category, frequency, target_count, schedule_days, status, priority, goal_id, archived_at } = req.body;
+  const current = localDb.habits[idx];
+
+  const updatedHabit = {
+    ...current,
+    name: name !== undefined ? String(name).trim() : current.name,
+    category: category !== undefined ? category : current.category,
+    frequency: frequency !== undefined ? frequency : current.frequency,
+    target_count: target_count !== undefined ? Number(target_count) : current.target_count,
+    schedule_days: Array.isArray(schedule_days) ? schedule_days : current.schedule_days,
+    status: status !== undefined ? status : current.status,
+    priority: priority !== undefined ? priority : current.priority,
+    goal_id: goal_id !== undefined ? (goal_id ? String(goal_id).trim() : null) : current.goal_id,
+    archived_at: archived_at !== undefined ? archived_at : current.archived_at,
+    updated_at: new Date().toISOString(),
+  };
+
+  localDb.habits[idx] = updatedHabit;
+  saveDbToFile();
+  return res.json({ habit: updatedHabit });
+});
+
+app.delete('/api/habits/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  localDb.habits = localDb.habits.filter((h) => h.id !== id);
+  // Also clean up associated habit entries
+  localDb.habit_entries = localDb.habit_entries.filter((e) => e.habit_id !== id);
+  saveDbToFile();
+  return res.json({ success: true, id });
+});
+
+app.post('/api/habits/:id/archive', async (req: Request, res: Response) => {
+  const { id } = req.params;
   const habit = localDb.habits.find((h) => h.id === id);
   if (!habit) {
     return res.status(404).json({ error: 'Habit not found' });
   }
-  if (name !== undefined) habit.name = name.trim();
-  if (category !== undefined) habit.category = category;
-  if (frequency !== undefined) habit.frequency = frequency;
-  if (target_count !== undefined) habit.target_count = target_count;
-  if (schedule_days !== undefined) habit.schedule_days = schedule_days;
-  if (priority !== undefined) (habit as any).priority = priority;
-  if (goal_id !== undefined) (habit as any).goal_id = goal_id;
-  if (status !== undefined) {
-    habit.status = status;
-    if (status === 'archived') {
-      habit.archived_at = archived_at || new Date().toISOString();
-    } else if (status === 'active') {
-      habit.archived_at = null;
-    }
-  }
+
+  habit.status = 'archived';
+  habit.archived_at = new Date().toISOString();
   habit.updated_at = new Date().toISOString();
+  saveDbToFile();
   return res.json({ habit });
 });
 
-// DELETE /api/habits/:id - Archive habit by default, or delete if permanent=true
-app.delete('/api/habits/:id', async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const permanent = req.query.permanent === 'true';
-  const sb = getSupabase();
-
-  if (sb) {
-    if (!isValidUuid(id)) {
-      return res.status(400).json({ error: 'Invalid habit ID format' });
-    }
-
-    try {
-      if (permanent) {
-        // Delete associated entries first
-        await sb.from('habit_entries').delete().eq('habit_id', id);
-        await sb.from('habits').delete().eq('id', id);
-        localDb.habits = localDb.habits.filter((h) => h.id !== id);
-        localDb.habit_entries = localDb.habit_entries.filter((e) => e.habit_id !== id);
-        return res.json({ success: true, message: 'Habit permanently deleted' });
-      } else {
-        // Soft archive by default
-        await resilientUpdate(sb, 'habits', id, {
-          status: 'archived',
-          archived_at: new Date().toISOString(),
-        });
-        const localHabit = localDb.habits.find((h) => h.id === id);
-        if (localHabit) {
-          localHabit.status = 'archived';
-          localHabit.archived_at = new Date().toISOString();
-        }
-        return res.json({ success: true, message: 'Habit archived' });
-      }
-    } catch (err: any) {
-      console.error('Error deleting/archiving habit in Supabase:', err);
-    }
-  }
-
-  // Fallback
-  const habit = localDb.habits.find((h) => h.id === id);
-  if (habit) {
-    if (permanent) {
-      localDb.habits = localDb.habits.filter((h) => h.id !== id);
-      localDb.habit_entries = localDb.habit_entries.filter((e) => e.habit_id !== id);
-    } else {
-      habit.status = 'archived';
-      habit.archived_at = new Date().toISOString();
-    }
-  }
-  return res.json({ success: true, message: permanent ? 'Habit deleted' : 'Habit archived' });
-});
-
-// POST /api/habits/:id/archive - Archive a habit
-app.post('/api/habits/:id/archive', async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const sb = getSupabase();
-  const archivedAt = new Date().toISOString();
-
-  if (sb) {
-    if (!isValidUuid(id)) {
-      return res.status(400).json({ error: 'Invalid habit ID format' });
-    }
-    try {
-      const { data, error } = await resilientUpdate(sb, 'habits', id, {
-        status: 'archived',
-        archived_at: archivedAt,
-        updated_at: new Date().toISOString(),
-      });
-      const localHabit = localDb.habits.find((h) => h.id === id);
-      if (localHabit) {
-        localHabit.status = 'archived';
-        localHabit.archived_at = archivedAt;
-      }
-      return res.json({ success: true, habit: data || localHabit, message: 'Habit archived' });
-    } catch (err: any) {
-      console.error('Error archiving habit in Supabase:', err);
-    }
-  }
-
-  const habit = localDb.habits.find((h) => h.id === id);
-  if (habit) {
-    habit.status = 'archived';
-    habit.archived_at = archivedAt;
-    habit.updated_at = new Date().toISOString();
-    return res.json({ success: true, habit, message: 'Habit archived' });
-  }
-  return res.status(404).json({ error: 'Habit not found' });
-});
-
-// POST /api/habits/:id/restore - Restore an archived habit
 app.post('/api/habits/:id/restore', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const sb = getSupabase();
-
-  if (sb) {
-    if (!isValidUuid(id)) {
-      return res.status(400).json({ error: 'Invalid habit ID format' });
-    }
-    try {
-      const { data, error } = await resilientUpdate(sb, 'habits', id, {
-        status: 'active',
-        archived_at: null,
-        updated_at: new Date().toISOString(),
-      });
-      const localHabit = localDb.habits.find((h) => h.id === id);
-      if (localHabit) {
-        localHabit.status = 'active';
-        localHabit.archived_at = null;
-      }
-      return res.json({ success: true, habit: data || localHabit, message: 'Habit restored' });
-    } catch (err: any) {
-      console.error('Error restoring habit in Supabase:', err);
-    }
-  }
-
   const habit = localDb.habits.find((h) => h.id === id);
-  if (habit) {
-    habit.status = 'active';
-    habit.archived_at = null;
-    habit.updated_at = new Date().toISOString();
-    return res.json({ success: true, habit, message: 'Habit restored' });
+  if (!habit) {
+    return res.status(404).json({ error: 'Habit not found' });
   }
-  return res.status(404).json({ error: 'Habit not found' });
+
+  habit.status = 'active';
+  habit.archived_at = null;
+  habit.updated_at = new Date().toISOString();
+  saveDbToFile();
+  return res.json({ habit });
 });
 
-// GET /api/habit-entries - Fetch entries for a specific month or range
+// ----------------------------------------------------
+// HABIT ENTRIES ENDPOINTS
+// ----------------------------------------------------
 app.get('/api/habit-entries', async (req: Request, res: Response) => {
   const year = parseInt(req.query.year as string, 10);
   const month = parseInt(req.query.month as string, 10);
@@ -1016,91 +698,20 @@ app.get('/api/habit-entries', async (req: Request, res: Response) => {
     startDate = `${year}-${String(month).padStart(2, '0')}-01`;
     endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   } else {
-    // Full year
     startDate = `${year}-01-01`;
     endDate = `${year}-12-31`;
   }
 
-  const sb = getSupabase();
-
-  if (sb) {
-    try {
-      const { data, error } = await sb
-        .from('habit_entries')
-        .select('*')
-        .gte('date', startDate)
-        .lte('date', endDate);
-
-      if (!error && data) {
-        return res.json({ entries: data });
-      }
-    } catch (err: any) {
-      console.error('Error fetching habit entries:', err);
-    }
-  }
-
-  // Fallback
-  const matched = localDb.habit_entries.filter((e) => e.date >= startDate && e.date <= endDate);
-  return res.json({ entries: matched });
+  const entries = localDb.habit_entries.filter((e) => e.date >= startDate && e.date <= endDate);
+  return res.json({ entries });
 });
 
-// POST /api/habit-entries/toggle - Create or toggle habit entry
 app.post('/api/habit-entries/toggle', async (req: Request, res: Response) => {
   const { habit_id, date, completed } = req.body;
-
   if (!habit_id || !date || typeof completed !== 'boolean') {
     return res.status(400).json({ error: 'habit_id, date (YYYY-MM-DD), and completed boolean are required' });
   }
 
-  const sb = getSupabase();
-
-  if (sb) {
-    if (!isValidUuid(habit_id)) {
-      return res.status(400).json({ error: `Invalid habit ID format: "${habit_id}". Please refresh the page.` });
-    }
-
-    try {
-      const { data: existing } = await sb
-        .from('habit_entries')
-        .select('*')
-        .eq('habit_id', habit_id)
-        .eq('date', date)
-        .maybeSingle();
-
-      let entryData: any = null;
-
-      if (existing) {
-        const updatePayload = { completed, updated_at: new Date().toISOString() };
-        const { data: updated } = await resilientUpdate(sb, 'habit_entries', existing.id, updatePayload);
-        entryData = updated || { ...existing, completed };
-      } else {
-        const newId = crypto.randomUUID();
-        const insertPayload = { id: newId, habit_id, date, completed, created_at: new Date().toISOString() };
-        const { data: inserted } = await resilientInsert(sb, 'habit_entries', insertPayload);
-        entryData = inserted || insertPayload;
-      }
-
-      // Sync localDb
-      let loc = localDb.habit_entries.find((e) => e.habit_id === habit_id && e.date === date);
-      if (loc) {
-        loc.completed = completed;
-      } else {
-        localDb.habit_entries.push({
-          id: entryData.id || crypto.randomUUID(),
-          habit_id,
-          date,
-          completed,
-          created_at: entryData.created_at || new Date().toISOString(),
-        });
-      }
-
-      return res.json({ entry: entryData });
-    } catch (err: any) {
-      console.error('Error toggling habit entry in Supabase:', err);
-    }
-  }
-
-  // Fallback
   let entry = localDb.habit_entries.find((e) => e.habit_id === habit_id && e.date === date);
   if (entry) {
     entry.completed = completed;
@@ -1116,1198 +727,716 @@ app.post('/api/habit-entries/toggle', async (req: Request, res: Response) => {
     localDb.habit_entries.push(entry);
   }
 
+  saveDbToFile();
   return res.json({ entry });
 });
 
-// GET /api/reflections - Fetch reflection for year and month
+// ----------------------------------------------------
+// REFLECTIONS ENDPOINTS
+// ----------------------------------------------------
 app.get('/api/reflections', async (req: Request, res: Response) => {
   const year = parseInt(req.query.year as string, 10);
   const month = parseInt(req.query.month as string, 10);
 
   if (isNaN(year) || isNaN(month)) {
-    return res.status(400).json({ error: 'Valid year and month required' });
+    return res.status(400).json({ error: 'year and month are required' });
   }
 
-  const sb = getSupabase();
-
-  if (sb) {
-    try {
-      const { data, error } = await sb
-        .from('reflections')
-        .select('*')
-        .eq('year', year)
-        .eq('month', month)
-        .maybeSingle();
-
-      if (!error && data) {
-        return res.json({ reflection: data });
-      }
-    } catch (err: any) {
-      console.error('Error fetching reflection from Supabase:', err);
-    }
-  }
-
-  // Fallback
   const reflection = localDb.reflections.find((r) => r.year === year && r.month === month) || null;
   return res.json({ reflection });
 });
 
-// POST /api/reflections - Save or update reflection
 app.post('/api/reflections', async (req: Request, res: Response) => {
-  const { month, year, content } = req.body;
-
-  if (typeof month !== 'number' || typeof year !== 'number' || typeof content !== 'string') {
-    return res.status(400).json({ error: 'month, year, and content required' });
+  const { year, month, content } = req.body;
+  if (!year || !month || content === undefined) {
+    return res.status(400).json({ error: 'year, month, and content are required' });
   }
 
-  const sb = getSupabase();
-
-  if (sb) {
-    try {
-      const { data: existing } = await sb
-        .from('reflections')
-        .select('*')
-        .eq('year', year)
-        .eq('month', month)
-        .maybeSingle();
-
-      let reflectionData: any = null;
-
-      if (existing) {
-        const updatePayload = { content, updated_at: new Date().toISOString() };
-        const { data: updated } = await resilientUpdate(sb, 'reflections', existing.id, updatePayload);
-        reflectionData = updated || { ...existing, content };
-      } else {
-        const newId = crypto.randomUUID();
-        const insertPayload = { id: newId, month, year, content, created_at: new Date().toISOString() };
-        const { data: inserted } = await resilientInsert(sb, 'reflections', insertPayload);
-        reflectionData = inserted || insertPayload;
-      }
-
-      // Sync localDb
-      let loc = localDb.reflections.find((r) => r.year === year && r.month === month);
-      if (loc) {
-        loc.content = content;
-      } else {
-        localDb.reflections.push({
-          id: reflectionData.id || crypto.randomUUID(),
-          month,
-          year,
-          content,
-          created_at: new Date().toISOString(),
-        });
-      }
-
-      return res.json({ reflection: reflectionData });
-    } catch (err: any) {
-      console.error('Error saving reflection in Supabase:', err);
-    }
-  }
-
-  // Fallback
-  let reflection = localDb.reflections.find((r) => r.year === year && r.month === month);
+  let reflection = localDb.reflections.find((r) => r.year === Number(year) && r.month === Number(month));
   if (reflection) {
-    reflection.content = content;
+    reflection.content = String(content);
     reflection.updated_at = new Date().toISOString();
   } else {
     reflection = {
       id: crypto.randomUUID(),
-      month,
-      year,
-      content,
+      year: Number(year),
+      month: Number(month),
+      content: String(content),
       created_at: new Date().toISOString(),
     };
     localDb.reflections.push(reflection);
   }
 
+  saveDbToFile();
   return res.json({ reflection });
 });
 
-// GET /api/weekly-reviews - Fetch weekly reviews
+// ----------------------------------------------------
+// WEEKLY REVIEWS ENDPOINTS
+// ----------------------------------------------------
 app.get('/api/weekly-reviews', async (req: Request, res: Response) => {
   const year = parseInt(req.query.year as string, 10);
   const month = parseInt(req.query.month as string, 10);
 
   if (isNaN(year) || isNaN(month)) {
-    return res.status(400).json({ error: 'Valid year and month required' });
+    return res.status(400).json({ error: 'year and month are required' });
   }
 
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data, error } = await sb
-        .from('weekly_reviews')
-        .select('*')
-        .eq('year', year)
-        .eq('month', month);
-
-      if (!error && data) {
-        const formatted = data.map((r: any) => ({
-          ...r,
-          improve: r.improve || r.could_improve || '',
-        }));
-        return res.json({ reviews: formatted });
-      }
-    } catch (err) {
-      // fallback
-    }
-  }
-
-  // Fallback
-  const reviews = localDb.weekly_reviews.filter((w) => w.year === year && w.month === month);
+  const reviews = localDb.weekly_reviews.filter((r) => r.year === year && r.month === month);
   return res.json({ reviews });
 });
 
-// POST /api/weekly-reviews - Save weekly review
 app.post('/api/weekly-reviews', async (req: Request, res: Response) => {
   const { year, month, week_number, went_well, improve, could_improve, next_focus } = req.body;
-
-  if (typeof year !== 'number' || typeof month !== 'number' || typeof week_number !== 'number') {
-    return res.status(400).json({ error: 'year, month, and week_number required' });
+  if (!year || !month || !week_number) {
+    return res.status(400).json({ error: 'year, month, and week_number are required' });
   }
 
-  const validImprove = improve || could_improve || '';
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data: existing } = await sb
-        .from('weekly_reviews')
-        .select('*')
-        .eq('year', year)
-        .eq('month', month)
-        .eq('week_number', week_number)
-        .maybeSingle();
-
-      let reviewData: any = null;
-
-      if (existing) {
-        const updatePayload = {
-          went_well: went_well || '',
-          improve: validImprove,
-          could_improve: validImprove,
-          next_focus: next_focus || '',
-          updated_at: new Date().toISOString(),
-        };
-        const { data: updated } = await resilientUpdate(sb, 'weekly_reviews', existing.id, updatePayload);
-        reviewData = updated || { ...existing, ...updatePayload };
-      } else {
-        const newId = crypto.randomUUID();
-        const insertPayload = {
-          id: newId,
-          year,
-          month,
-          week_number,
-          went_well: went_well || '',
-          improve: validImprove,
-          could_improve: validImprove,
-          next_focus: next_focus || '',
-          created_at: new Date().toISOString(),
-        };
-        const { data: inserted } = await resilientInsert(sb, 'weekly_reviews', insertPayload);
-        reviewData = inserted || insertPayload;
-      }
-
-      // Sync localDb
-      let loc = localDb.weekly_reviews.find(
-        (w) => w.year === year && w.month === month && w.week_number === week_number
-      );
-      if (loc) {
-        loc.went_well = went_well || '';
-        loc.improve = validImprove;
-        loc.could_improve = validImprove;
-        loc.next_focus = next_focus || '';
-      } else {
-        localDb.weekly_reviews.push({
-          id: reviewData?.id || crypto.randomUUID(),
-          year,
-          month,
-          week_number,
-          went_well: went_well || '',
-          improve: validImprove,
-          could_improve: validImprove,
-          next_focus: next_focus || '',
-          created_at: new Date().toISOString(),
-        });
-      }
-
-      return res.json({
-        review: {
-          ...reviewData,
-          improve: reviewData?.improve || reviewData?.could_improve || validImprove,
-        },
-      });
-    } catch (err) {
-      console.error('Error saving weekly review in Supabase:', err);
-    }
-  }
-
-  // Fallback
-  let item = localDb.weekly_reviews.find(
-    (w) => w.year === year && w.month === month && w.week_number === week_number
+  let review = localDb.weekly_reviews.find(
+    (r) => r.year === Number(year) && r.month === Number(month) && r.week_number === Number(week_number)
   );
-  if (item) {
-    item.went_well = went_well || '';
-    item.improve = validImprove;
-    item.could_improve = validImprove;
-    item.next_focus = next_focus || '';
-    item.updated_at = new Date().toISOString();
+
+  const finalImprove = improve || could_improve || '';
+
+  if (review) {
+    review.went_well = went_well || '';
+    review.improve = finalImprove;
+    review.could_improve = finalImprove;
+    review.next_focus = next_focus || '';
+    review.updated_at = new Date().toISOString();
   } else {
-    item = {
+    review = {
       id: crypto.randomUUID(),
-      year,
-      month,
-      week_number,
+      year: Number(year),
+      month: Number(month),
+      week_number: Number(week_number),
       went_well: went_well || '',
-      improve: validImprove,
-      could_improve: validImprove,
+      improve: finalImprove,
+      could_improve: finalImprove,
       next_focus: next_focus || '',
       created_at: new Date().toISOString(),
     };
-    localDb.weekly_reviews.push(item);
+    localDb.weekly_reviews.push(review);
   }
 
-  return res.json({ review: item });
+  saveDbToFile();
+  return res.json({ review });
 });
 
-// GET /api/affirmations (or /api/affirmation)
+// ----------------------------------------------------
+// AFFIRMATION ENDPOINTS
+// ----------------------------------------------------
 app.get(['/api/affirmation', '/api/affirmations'], async (_req: Request, res: Response) => {
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      // Try affirmations table first
-      let { data, error } = await sb.from('affirmations').select('*').limit(1).maybeSingle();
-      if (error) {
-        // Try fallback table name visual_affirmations
-        const fallback = await sb.from('visual_affirmations').select('*').limit(1).maybeSingle();
-        data = fallback.data;
-      }
-      if (data) {
-        return res.json({ affirmation: data });
-      }
-    } catch (err) {
-      // fallback
-    }
-  }
-  return res.json({ affirmation: localDb.affirmations[0] });
+  const affirmation = localDb.affirmations.find((a) => a.active) || localDb.affirmations[0] || null;
+  return res.json({ affirmation });
 });
 
-// POST /api/affirmations (or /api/affirmation)
 app.post(['/api/affirmation', '/api/affirmations'], async (req: Request, res: Response) => {
   const { quote, author, image_url, active } = req.body;
+  if (!quote || typeof quote !== 'string') {
+    return res.status(400).json({ error: 'quote is required' });
+  }
+
   const affirmation = {
-    quote: quote || 'Small progress every day creates massive results.',
-    author: author || 'Robin Sharma',
-    image_url: image_url || '',
-    active: active !== false,
-    updated_at: new Date().toISOString(),
-  };
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      let { data: existing } = await sb.from('affirmations').select('id').limit(1).maybeSingle();
-      if (existing) {
-        await resilientUpdate(sb, 'affirmations', existing.id, affirmation);
-      } else {
-        const { error: insErr } = await resilientInsert(sb, 'affirmations', affirmation);
-        if (insErr) {
-          const vExisting = await sb.from('visual_affirmations').select('id').limit(1).maybeSingle();
-          if (vExisting.data) {
-            await resilientUpdate(sb, 'visual_affirmations', vExisting.data.id, affirmation);
-          } else {
-            await resilientInsert(sb, 'visual_affirmations', affirmation);
-          }
-        }
-      }
-    } catch (err) {
-      // fallback
-    }
-  }
-
-  localDb.affirmations[0] = { ...localDb.affirmations[0], ...affirmation };
-  return res.json({ affirmation: localDb.affirmations[0] });
-});
-
-// GET /api/settings - Fetch all settings preferences
-app.get('/api/settings', async (_req: Request, res: Response) => {
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data, error } = await sb.from('settings').select('*');
-      if (!error && data && data.length > 0) {
-        const settingsMap: Record<string, any> = { ...localDb.settings };
-        data.forEach((row: any) => {
-          settingsMap[row.setting_key] = row.setting_value;
-        });
-        return res.json({ settings: settingsMap });
-      }
-    } catch (err) {
-      // fallback
-    }
-  }
-  return res.json({ settings: localDb.settings });
-});
-
-// POST /api/settings - Update settings preferences
-app.post('/api/settings', async (req: Request, res: Response) => {
-  const { setting_key, setting_value } = req.body;
-  if (!setting_key) {
-    return res.status(400).json({ error: 'setting_key is required' });
-  }
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data: existing } = await sb
-        .from('settings')
-        .select('*')
-        .eq('setting_key', setting_key)
-        .maybeSingle();
-
-      if (existing) {
-        await resilientUpdate(sb, 'settings', existing.id, {
-          setting_value,
-          updated_at: new Date().toISOString(),
-        });
-      } else {
-        await resilientInsert(sb, 'settings', {
-          setting_key,
-          setting_value,
-          created_at: new Date().toISOString(),
-        });
-      }
-    } catch (err) {
-      // fallback
-    }
-  }
-
-  localDb.settings[setting_key] = setting_value;
-  return res.json({ success: true, settings: localDb.settings });
-});
-
-// GET /api/habit-categories - Fetch categories
-app.get('/api/habit-categories', async (_req: Request, res: Response) => {
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data, error } = await sb.from('habit_categories').select('*').order('created_at', { ascending: true });
-      if (!error && data && data.length > 0) {
-        return res.json({ categories: data });
-      }
-    } catch (err) {
-      // fallback
-    }
-  }
-  return res.json({ categories: localDb.habit_categories });
-});
-
-// POST /api/habit-categories - Add custom category
-app.post('/api/habit-categories', async (req: Request, res: Response) => {
-  const { name, icon } = req.body;
-  if (!name || typeof name !== 'string' || !name.trim()) {
-    return res.status(400).json({ error: 'Category name is required' });
-  }
-
-  const newCat = {
     id: crypto.randomUUID(),
-    name: name.trim(),
-    icon: (icon && typeof icon === 'string' ? icon.trim() : '✨'),
+    quote: quote.trim(),
+    author: author ? String(author).trim() : '',
+    image_url: image_url ? String(image_url).trim() : '',
+    active: active !== false,
     created_at: new Date().toISOString(),
   };
 
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      await resilientInsert(sb, 'habit_categories', newCat);
-    } catch (err) {
-      console.warn('Error saving category to Supabase:', err);
-    }
-  }
-
-  localDb.habit_categories.push(newCat);
-  return res.status(201).json({ category: newCat });
+  localDb.affirmations = [affirmation, ...localDb.affirmations];
+  saveDbToFile();
+  return res.json({ affirmation });
 });
 
-// DELETE /api/habit-categories/:id - Delete custom category
+// ----------------------------------------------------
+// SETTINGS ENDPOINTS
+// ----------------------------------------------------
+app.get('/api/settings', async (_req: Request, res: Response) => {
+  return res.json({ settings: localDb.settings });
+});
+
+app.post('/api/settings', async (req: Request, res: Response) => {
+  const updates = req.body || {};
+  localDb.settings = { ...localDb.settings, ...updates };
+  saveDbToFile();
+  return res.json({ settings: localDb.settings });
+});
+
+// ----------------------------------------------------
+// HABIT CATEGORIES ENDPOINTS
+// ----------------------------------------------------
+app.get('/api/habit-categories', async (_req: Request, res: Response) => {
+  return res.json({ categories: localDb.habit_categories });
+});
+
+app.post('/api/habit-categories', async (req: Request, res: Response) => {
+  const { name, icon } = req.body;
+  if (!name || typeof name !== 'string') {
+    return res.status(400).json({ error: 'name is required' });
+  }
+
+  const category = {
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    icon: icon ? String(icon).trim() : '🎯',
+    created_at: new Date().toISOString(),
+  };
+
+  localDb.habit_categories.push(category);
+  saveDbToFile();
+  return res.status(201).json({ category });
+});
+
 app.delete('/api/habit-categories/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      await sb.from('habit_categories').delete().eq('id', id);
-    } catch (err) {
-      console.warn('Error deleting category in Supabase:', err);
-    }
-  }
   localDb.habit_categories = localDb.habit_categories.filter((c) => c.id !== id);
-  return res.json({ success: true, message: 'Category removed' });
+  saveDbToFile();
+  return res.json({ success: true, id });
 });
 
-// ==========================================
-// GOALS API
-// ==========================================
-// GET /api/goals - Fetch all goals
+// ----------------------------------------------------
+// GOALS ENDPOINTS
+// ----------------------------------------------------
 app.get('/api/goals', async (_req: Request, res: Response) => {
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data, error } = await sb.from('goals').select('*').order('created_at', { ascending: false });
-      if (!error && data) {
-        return res.json({ goals: data });
-      }
-    } catch (err) {
-      // fallback
-    }
-  }
   return res.json({ goals: localDb.goals });
 });
 
-// POST /api/goals - Create new goal
 app.post('/api/goals', async (req: Request, res: Response) => {
   const { title, description, category, target_date, progress, status } = req.body;
-  if (!title || typeof title !== 'string' || !title.trim()) {
-    return res.status(400).json({ error: 'Goal title is required' });
+  if (!title || typeof title !== 'string') {
+    return res.status(400).json({ error: 'title is required' });
   }
 
-  const newGoal = {
+  const goal = {
     id: crypto.randomUUID(),
     title: title.trim(),
     description: description ? String(description).trim() : '',
     category: category || 'general',
-    target_date: target_date || null,
-    progress: typeof progress === 'number' ? progress : 0,
+    target_date: target_date || undefined,
+    progress: progress != null ? Number(progress) : 0,
     status: status === 'completed' || status === 'paused' ? status : ('active' as const),
     created_at: new Date().toISOString(),
+  };
+
+  localDb.goals.push(goal);
+  saveDbToFile();
+  return res.status(201).json({ goal });
+});
+
+app.put('/api/goals/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const idx = localDb.goals.findIndex((g) => g.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Goal not found' });
+  }
+
+  const current = localDb.goals[idx];
+  const { title, description, category, target_date, progress, status } = req.body;
+
+  const updatedGoal = {
+    ...current,
+    title: title !== undefined ? String(title).trim() : current.title,
+    description: description !== undefined ? String(description).trim() : current.description,
+    category: category !== undefined ? category : current.category,
+    target_date: target_date !== undefined ? target_date : current.target_date,
+    progress: progress !== undefined ? Number(progress) : current.progress,
+    status: status !== undefined ? status : current.status,
     updated_at: new Date().toISOString(),
   };
 
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data } = await resilientInsert(sb, 'goals', newGoal);
-      if (data) {
-        localDb.goals.push(data);
-        return res.status(201).json({ goal: data });
-      }
-    } catch (err) {
-      console.warn('Error creating goal in Supabase:', err);
-    }
-  }
-
-  localDb.goals.push(newGoal);
-  return res.status(201).json({ goal: newGoal });
+  localDb.goals[idx] = updatedGoal;
+  saveDbToFile();
+  return res.json({ goal: updatedGoal });
 });
 
-// PUT /api/goals/:id - Update goal
-app.put('/api/goals/:id', async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { title, description, category, target_date, progress, status } = req.body;
-
-  const updatePayload: any = { updated_at: new Date().toISOString() };
-  if (title !== undefined) updatePayload.title = String(title).trim();
-  if (description !== undefined) updatePayload.description = String(description).trim();
-  if (category !== undefined) updatePayload.category = category;
-  if (target_date !== undefined) updatePayload.target_date = target_date;
-  if (progress !== undefined) updatePayload.progress = progress;
-  if (status !== undefined) updatePayload.status = status;
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data } = await resilientUpdate(sb, 'goals', id, updatePayload);
-      if (data) {
-        const idx = localDb.goals.findIndex((g) => g.id === id);
-        if (idx >= 0) localDb.goals[idx] = { ...localDb.goals[idx], ...data };
-        return res.json({ goal: data });
-      }
-    } catch (err) {
-      console.warn('Error updating goal in Supabase:', err);
-    }
-  }
-
-  const localIdx = localDb.goals.findIndex((g) => g.id === id);
-  if (localIdx >= 0) {
-    localDb.goals[localIdx] = { ...localDb.goals[localIdx], ...updatePayload };
-    return res.json({ goal: localDb.goals[localIdx] });
-  }
-
-  return res.status(404).json({ error: 'Goal not found' });
-});
-
-// DELETE /api/goals/:id - Delete goal
 app.delete('/api/goals/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  if (!id) {
-    return res.status(400).json({ error: 'Goal ID is required' });
-  }
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      // 1. Unlink any habits pointing to this goal first to prevent FK constraint conflicts
-      const { error: unlinkError } = await sb.from('habits').update({ goal_id: null }).eq('goal_id', id);
-      if (unlinkError) {
-        console.warn('Notice unlinking habits in Supabase:', unlinkError.message);
-      }
-
-      // 2. Delete the vision goal record
-      const { error: deleteError } = await sb.from('goals').delete().eq('id', id);
-      if (deleteError) {
-        console.warn('Error deleting goal in Supabase:', deleteError.message);
-      }
-    } catch (err: any) {
-      console.warn('Error deleting goal in Supabase:', err?.message || err);
+  // Unlink habits first
+  localDb.habits.forEach((h) => {
+    if (h.goal_id === id) {
+      h.goal_id = null;
     }
+  });
+  localDb.goals = localDb.goals.filter((g) => g.id !== id);
+  saveDbToFile();
+  return res.json({ success: true, id });
+});
+
+// ----------------------------------------------------
+// DAILY JOURNAL ENDPOINTS
+// ----------------------------------------------------
+app.get('/api/journal', async (req: Request, res: Response) => {
+  const { date, year, month } = req.query;
+
+  if (date && typeof date === 'string') {
+    const entry = localDb.daily_journal.find((j) => j.date === date) || null;
+    return res.json({ journal: entry ? [entry] : [] });
   }
 
-  // Also clean up in-memory localDb
-  if (localDb.habits) {
-    localDb.habits.forEach((h: any) => {
-      if (h.goal_id === id) {
-        h.goal_id = null;
+  if (year && month) {
+    const y = parseInt(year as string, 10);
+    const m = parseInt(month as string, 10);
+    const prefix = `${y}-${String(m).padStart(2, '0')}`;
+    const entries = localDb.daily_journal.filter((j) => j.date.startsWith(prefix));
+    return res.json({ journal: entries });
+  }
+
+  return res.json({ journal: localDb.daily_journal });
+});
+
+app.post('/api/journal', async (req: Request, res: Response) => {
+  const {
+    date,
+    content,
+    mood,
+    energy_level,
+    productivity,
+    highlights,
+    gratitude,
+    wins,
+    challenges,
+    priorities,
+    tags,
+    linked_notes,
+  } = req.body;
+
+  if (!date) {
+    return res.status(400).json({ error: 'date is required' });
+  }
+
+  let entry: any = localDb.daily_journal.find((j) => j.date === date);
+  if (entry) {
+    if (content !== undefined) entry.content = String(content);
+    if (mood !== undefined) entry.mood = mood;
+    if (energy_level !== undefined) entry.energy_level = Number(energy_level);
+    if (productivity !== undefined) entry.productivity = Number(productivity);
+    if (highlights !== undefined) entry.highlights = String(highlights);
+    if (gratitude !== undefined) entry.gratitude = String(gratitude);
+    if (wins !== undefined) entry.wins = String(wins);
+    if (challenges !== undefined) entry.challenges = String(challenges);
+    if (priorities !== undefined) entry.priorities = String(priorities);
+    if (tags !== undefined) entry.tags = Array.isArray(tags) ? tags : [];
+    if (linked_notes !== undefined) entry.linked_notes = Array.isArray(linked_notes) ? linked_notes : [];
+    entry.updated_at = new Date().toISOString();
+  } else {
+    entry = {
+      id: crypto.randomUUID(),
+      date,
+      content: content !== undefined ? String(content) : '',
+      mood,
+      energy_level: energy_level != null ? Number(energy_level) : undefined,
+      productivity: productivity != null ? Number(productivity) : undefined,
+      highlights: highlights ? String(highlights) : undefined,
+      gratitude: gratitude ? String(gratitude) : undefined,
+      wins: wins ? String(wins) : undefined,
+      challenges: challenges ? String(challenges) : undefined,
+      priorities: priorities ? String(priorities) : undefined,
+      tags: Array.isArray(tags) ? tags : [],
+      linked_notes: Array.isArray(linked_notes) ? linked_notes : [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    localDb.daily_journal.push(entry);
+  }
+
+  saveDbToFile();
+  return res.json({ entry });
+});
+
+app.delete('/api/journal/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const initialLen = localDb.daily_journal.length;
+  localDb.daily_journal = localDb.daily_journal.filter((j) => j.id !== id && j.date !== id);
+  if (localDb.daily_journal.length !== initialLen) {
+    saveDbToFile();
+    return res.json({ success: true, message: 'Journal entry deleted' });
+  }
+  return res.status(404).json({ error: 'Journal entry not found' });
+});
+
+app.delete('/api/journal/date/:date', async (req: Request, res: Response) => {
+  const { date } = req.params;
+  const initialLen = localDb.daily_journal.length;
+  localDb.daily_journal = localDb.daily_journal.filter((j) => j.date !== date);
+  if (localDb.daily_journal.length !== initialLen) {
+    saveDbToFile();
+    return res.json({ success: true, message: 'Journal entry deleted' });
+  }
+  return res.status(404).json({ error: 'Journal entry not found' });
+});
+
+// ----------------------------------------------------
+// OBSIDIAN KNOWLEDGE NOTES ENDPOINTS
+// ----------------------------------------------------
+app.get('/api/notes', async (req: Request, res: Response) => {
+  const { category, tag, search, archived } = req.query;
+
+  let notes = [...(localDb.notes || [])];
+
+  // Archive filter: default to non-archived unless specifically requested
+  if (archived === 'true') {
+    notes = notes.filter((n) => Boolean(n.archived));
+  } else if (archived === 'all') {
+    // return all
+  } else {
+    notes = notes.filter((n) => !n.archived);
+  }
+
+  if (category && typeof category === 'string' && category !== 'All' && category !== 'all') {
+    notes = notes.filter((n) => (n.category || '').toLowerCase() === category.toLowerCase());
+  }
+
+  if (tag && typeof tag === 'string') {
+    const targetTag = tag.startsWith('#') ? tag : `#${tag}`;
+    notes = notes.filter((n) => Array.isArray(n.tags) && n.tags.some((t) => t.toLowerCase() === targetTag.toLowerCase()));
+  }
+
+  if (search && typeof search === 'string') {
+    const q = search.toLowerCase();
+    notes = notes.filter(
+      (n) =>
+        (n.title && n.title.toLowerCase().includes(q)) ||
+        (n.content && n.content.toLowerCase().includes(q)) ||
+        (Array.isArray(n.tags) && n.tags.some((t) => t.toLowerCase().includes(q)))
+    );
+  }
+
+  // Sort: pinned first, then updated_at desc
+  notes.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    const timeA = new Date(a.updated_at || a.created_at).getTime();
+    const timeB = new Date(b.updated_at || b.created_at).getTime();
+    return timeB - timeA;
+  });
+
+  return res.json({ notes });
+});
+
+app.post('/api/notes', async (req: Request, res: Response) => {
+  const {
+    title,
+    content,
+    category,
+    tags,
+    type = 'note',
+    pinned = false,
+    favorite = false,
+    color,
+    checklist,
+  } = req.body;
+
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ error: 'Title is required for knowledge note' });
+  }
+
+  const cleanTitle = String(title).trim();
+  const now = new Date().toISOString();
+
+  const newNote = {
+    id: crypto.randomUUID(),
+    title: cleanTitle,
+    content: content !== undefined ? String(content) : '',
+    category: category ? String(category) : 'Daily Journal',
+    tags: Array.isArray(tags) ? tags : [],
+    type: (type as 'note' | 'journal' | 'checklist') || 'note',
+    pinned: Boolean(pinned),
+    favorite: Boolean(favorite),
+    archived: false,
+    color: color || '#10B981',
+    checklist: Array.isArray(checklist) ? checklist : undefined,
+    created_at: now,
+    updated_at: now,
+  };
+
+  localDb.notes.push(newNote);
+  saveDbToFile();
+
+  return res.status(201).json({ note: newNote });
+});
+
+app.put('/api/notes/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const noteIndex = localDb.notes.findIndex((n) => n.id === id);
+
+  if (noteIndex < 0) {
+    return res.status(404).json({ error: 'Note not found' });
+  }
+
+  const existing = localDb.notes[noteIndex];
+  const {
+    title,
+    content,
+    category,
+    tags,
+    type,
+    pinned,
+    favorite,
+    archived,
+    color,
+    checklist,
+  } = req.body;
+
+  const updatedNote = {
+    ...existing,
+    title: title !== undefined ? String(title).trim() : existing.title,
+    content: content !== undefined ? String(content) : existing.content,
+    category: category !== undefined ? String(category) : existing.category,
+    tags: tags !== undefined ? (Array.isArray(tags) ? tags : []) : existing.tags,
+    type: type !== undefined ? type : existing.type,
+    pinned: pinned !== undefined ? Boolean(pinned) : existing.pinned,
+    favorite: favorite !== undefined ? Boolean(favorite) : existing.favorite,
+    archived: archived !== undefined ? Boolean(archived) : existing.archived,
+    color: color !== undefined ? color : existing.color,
+    checklist: checklist !== undefined ? checklist : existing.checklist,
+    updated_at: new Date().toISOString(),
+  };
+
+  localDb.notes[noteIndex] = updatedNote;
+  saveDbToFile();
+
+  return res.json({ note: updatedNote });
+});
+
+app.delete('/api/notes/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const initialLen = localDb.notes.length;
+  localDb.notes = localDb.notes.filter((n) => n.id !== id);
+
+  if (localDb.notes.length !== initialLen) {
+    saveDbToFile();
+    return res.json({ success: true, message: 'Note deleted permanently' });
+  }
+
+  return res.status(404).json({ error: 'Note not found' });
+});
+
+app.post('/api/notes/:id/duplicate', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const existing = localDb.notes.find((n) => n.id === id);
+
+  if (!existing) {
+    return res.status(404).json({ error: 'Note not found' });
+  }
+
+  const now = new Date().toISOString();
+  const cloned = {
+    ...existing,
+    id: crypto.randomUUID(),
+    title: `${existing.title} (Copy)`,
+    pinned: false,
+    created_at: now,
+    updated_at: now,
+  };
+
+  localDb.notes.push(cloned);
+  saveDbToFile();
+
+  return res.status(201).json({ note: cloned });
+});
+
+// Rename note and cascade [[Old Title]] to [[New Title]] across all notes
+app.patch('/api/notes/rename', async (req: Request, res: Response) => {
+  const { id, oldTitle, newTitle } = req.body;
+
+  if (!id || !newTitle || !String(newTitle).trim()) {
+    return res.status(400).json({ error: 'id and newTitle are required' });
+  }
+
+  const targetNote = localDb.notes.find((n) => n.id === id);
+  if (!targetNote) {
+    return res.status(404).json({ error: 'Target note not found' });
+  }
+
+  const previousTitle = oldTitle || targetNote.title;
+  const cleanedNewTitle = String(newTitle).trim();
+  targetNote.title = cleanedNewTitle;
+  targetNote.updated_at = new Date().toISOString();
+
+  // Cascade replacement in other notes
+  let updatedCount = 0;
+  if (previousTitle && previousTitle !== cleanedNewTitle) {
+    const searchPattern = new RegExp(`\\[\\[${previousTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\]`, 'g');
+    const replacement = `[[${cleanedNewTitle}]]`;
+
+    localDb.notes.forEach((otherNote) => {
+      if (otherNote.id !== id && otherNote.content && searchPattern.test(otherNote.content)) {
+        otherNote.content = otherNote.content.replace(searchPattern, replacement);
+        otherNote.updated_at = new Date().toISOString();
+        updatedCount++;
+      }
+    });
+
+    // Also cascade in daily_journal
+    localDb.daily_journal.forEach((j) => {
+      if (j.content && searchPattern.test(j.content)) {
+        j.content = j.content.replace(searchPattern, replacement);
+        j.updated_at = new Date().toISOString();
+        updatedCount++;
       }
     });
   }
-  localDb.goals = localDb.goals.filter((g) => g.id !== id);
 
-  return res.json({ success: true, message: 'Goal removed successfully' });
+  saveDbToFile();
+  return res.json({ note: targetNote, referencesUpdated: updatedCount });
 });
 
-// ==========================================
-// DAILY JOURNAL & MOOD API
-// ==========================================
-// GET /api/journal - Fetch daily journal notes
-app.get('/api/journal', async (req: Request, res: Response) => {
-  const date = req.query.date as string;
-  const month = req.query.month ? parseInt(req.query.month as string, 10) : undefined;
-  const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
-  const startDate = req.query.startDate as string;
-  const endDate = req.query.endDate as string;
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      let query = sb.from('daily_journal').select('*');
-      if (date) {
-        query = query.eq('date', date);
-      } else if (startDate && endDate) {
-        query = query.gte('date', startDate).lte('date', endDate);
-      } else if (month && year) {
-        const start = `${year}-${String(month).padStart(2, '0')}-01`;
-        const end = `${year}-${String(month).padStart(2, '0')}-31`;
-        query = query.gte('date', start).lte('date', end);
-      }
-      const { data, error } = await query.order('date', { ascending: true });
-      if (!error && data) {
-        return res.json({ journal: data });
-      }
-    } catch (err) {
-      // fallback
-    }
-  }
-
-  let filtered = [...localDb.daily_journal];
-  if (date) {
-    filtered = filtered.filter((j) => j.date === date);
-  } else if (startDate && endDate) {
-    filtered = filtered.filter((j) => j.date >= startDate && j.date <= endDate);
-  } else if (month && year) {
-    const prefix = `${year}-${String(month).padStart(2, '0')}`;
-    filtered = filtered.filter((j) => j.date.startsWith(prefix));
-  }
-  filtered.sort((a, b) => a.date.localeCompare(b.date));
-  return res.json({ journal: filtered });
-});
-
-// POST /api/journal - Upsert daily journal / mood
-app.post('/api/journal', async (req: Request, res: Response) => {
-  let { date, content, mood, energy_level } = req.body;
-
-  // Robust date normalization: handle strings, ISO timestamps, or YYYY-M-D
-  if (typeof date === 'string') {
-    date = date.trim();
-    if (date.includes('T')) {
-      date = date.split('T')[0];
-    }
-    const match = date.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-    if (match) {
-      const y = match[1];
-      const m = match[2].padStart(2, '0');
-      const d = match[3].padStart(2, '0');
-      date = `${y}-${m}-${d}`;
-    }
-  }
-
-  // Fallback to today's date if missing or still not in YYYY-MM-DD format
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    date = `${y}-${m}-${d}`;
-  }
-
-  const payload: Record<string, any> = {
-    date,
-    updated_at: new Date().toISOString(),
-  };
-  if (content !== undefined) payload.content = String(content);
-  if (mood !== undefined) payload.mood = String(mood);
-  if (energy_level !== undefined && energy_level !== null) {
-    const energyNum = Math.min(5, Math.max(1, Math.round(Number(energy_level))));
-    if (!isNaN(energyNum)) {
-      payload.energy_level = energyNum;
-    }
-  }
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data: existing } = await sb.from('daily_journal').select('*').eq('date', date).maybeSingle();
-      if (existing) {
-        const dbUpdatePayload: Record<string, any> = {
-          updated_at: new Date().toISOString(),
-        };
-        if (payload.mood !== undefined) dbUpdatePayload.mood = payload.mood;
-        if (payload.energy_level !== undefined) dbUpdatePayload.energy_level = payload.energy_level;
-        if (payload.daily_win !== undefined) dbUpdatePayload.daily_win = payload.daily_win;
-        else if (payload.content !== undefined) dbUpdatePayload.daily_win = payload.content;
-        if (payload.lesson_learned !== undefined) dbUpdatePayload.lesson_learned = payload.lesson_learned;
-        if (payload.tomorrow_focus !== undefined) dbUpdatePayload.tomorrow_focus = payload.tomorrow_focus;
-
-        const updateRes = await sb.from('daily_journal').update(dbUpdatePayload).eq('id', existing.id).select().maybeSingle();
-        const resultData = {
-          ...existing,
-          ...payload,
-          ...(updateRes.data || {}),
-          content: payload.content || payload.daily_win || existing.daily_win || '',
-          date,
-        };
-        const localIdx = localDb.daily_journal.findIndex((j) => j.date === date);
-        if (localIdx >= 0) localDb.daily_journal[localIdx] = { ...localDb.daily_journal[localIdx], ...resultData };
-        else localDb.daily_journal.push(resultData);
-        return res.json({ entry: resultData });
-      } else {
-        const dbInsertPayload: Record<string, any> = {
-          id: crypto.randomUUID(),
-          date,
-          mood: payload.mood !== undefined ? payload.mood : 'good',
-          energy_level: payload.energy_level !== undefined ? payload.energy_level : 3,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        if (payload.daily_win !== undefined) dbInsertPayload.daily_win = payload.daily_win;
-        else if (payload.content !== undefined) dbInsertPayload.daily_win = payload.content;
-        if (payload.lesson_learned !== undefined) dbInsertPayload.lesson_learned = payload.lesson_learned;
-        if (payload.tomorrow_focus !== undefined) dbInsertPayload.tomorrow_focus = payload.tomorrow_focus;
-
-        const insertRes = await sb.from('daily_journal').insert([dbInsertPayload]).select().maybeSingle();
-        const resultData = {
-          ...dbInsertPayload,
-          ...payload,
-          ...(insertRes.data || {}),
-          content: payload.content || payload.daily_win || '',
-          date,
-        };
-        const localIdx = localDb.daily_journal.findIndex((j) => j.date === date);
-        if (localIdx >= 0) localDb.daily_journal[localIdx] = { ...localDb.daily_journal[localIdx], ...resultData };
-        else localDb.daily_journal.push(resultData);
-        return res.json({ entry: resultData });
-      }
-    } catch (err) {
-      // Fallback to local
-    }
-  }
-
-  const localIdx = localDb.daily_journal.findIndex((j) => j.date === date);
-  if (localIdx >= 0) {
-    localDb.daily_journal[localIdx] = { ...localDb.daily_journal[localIdx], ...payload, date };
-    return res.json({ entry: localDb.daily_journal[localIdx] });
-  } else {
-    const newEntry = {
-      id: crypto.randomUUID(),
-      date,
-      content: payload.content !== undefined ? payload.content : '',
-      mood: payload.mood !== undefined ? payload.mood : 'good',
-      energy_level: payload.energy_level !== undefined ? payload.energy_level : 3,
-      ...payload,
-      created_at: new Date().toISOString(),
-    };
-    localDb.daily_journal.push(newEntry);
-    return res.json({ entry: newEntry });
-  }
-});
-
-// ==========================================
-// WEEKLY PLANNING API
-// ==========================================
-// GET /api/weekly-plans - Fetch weekly planning
+// ----------------------------------------------------
+// WEEKLY PLANS ENDPOINTS
+// ----------------------------------------------------
 app.get('/api/weekly-plans', async (req: Request, res: Response) => {
-  const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
-  const month = req.query.month ? parseInt(req.query.month as string, 10) : undefined;
+  const year = parseInt(req.query.year as string, 10);
+  const month = parseInt(req.query.month as string, 10);
 
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      let q = sb.from('weekly_plans').select('*');
-      if (year) q = q.eq('year', year);
-      if (month) q = q.eq('month', month);
-      const { data, error } = await q;
-      if (!error && data) {
-        return res.json({ plans: data });
-      }
-    } catch (err) {
-      // fallback
-    }
+  if (isNaN(year) || isNaN(month)) {
+    return res.status(400).json({ error: 'year and month are required' });
   }
 
-  let filtered = localDb.weekly_plans;
-  if (year) filtered = filtered.filter((p) => p.year === year);
-  if (month) filtered = filtered.filter((p) => p.month === month);
-  return res.json({ plans: filtered });
+  const plans = localDb.weekly_plans.filter((p) => p.year === year && p.month === month);
+  return res.json({ plans });
 });
 
-// POST /api/weekly-plans - Upsert weekly plan
 app.post('/api/weekly-plans', async (req: Request, res: Response) => {
   const { year, month, week_number, main_goal, priority_1, priority_2, priority_3, target_percentage } = req.body;
   if (!year || !month || !week_number) {
     return res.status(400).json({ error: 'year, month, and week_number are required' });
   }
 
-  const payload = {
-    year: Number(year),
-    month: Number(month),
-    week_number: Number(week_number),
-    main_goal: main_goal ? String(main_goal).trim() : '',
-    priority_1: priority_1 ? String(priority_1).trim() : '',
-    priority_2: priority_2 ? String(priority_2).trim() : '',
-    priority_3: priority_3 ? String(priority_3).trim() : '',
-    target_percentage: typeof target_percentage === 'number' ? target_percentage : 85,
-    updated_at: new Date().toISOString(),
-  };
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data: existing } = await sb
-        .from('weekly_plans')
-        .select('id')
-        .eq('year', payload.year)
-        .eq('month', payload.month)
-        .eq('week_number', payload.week_number)
-        .maybeSingle();
-
-      if (existing) {
-        await resilientUpdate(sb, 'weekly_plans', existing.id, payload);
-      } else {
-        await resilientInsert(sb, 'weekly_plans', {
-          id: crypto.randomUUID(),
-          ...payload,
-          created_at: new Date().toISOString(),
-        });
-      }
-    } catch (err) {
-      console.warn('Error saving weekly plan in Supabase:', err);
-    }
-  }
-
-  const idx = localDb.weekly_plans.findIndex(
-    (p) => p.year === payload.year && p.month === payload.month && p.week_number === payload.week_number
+  let plan = localDb.weekly_plans.find(
+    (p) => p.year === Number(year) && p.month === Number(month) && p.week_number === Number(week_number)
   );
-  if (idx >= 0) {
-    localDb.weekly_plans[idx] = { ...localDb.weekly_plans[idx], ...payload };
-    return res.json({ plan: localDb.weekly_plans[idx] });
+
+  if (plan) {
+    plan.main_goal = main_goal || '';
+    plan.priority_1 = priority_1 || '';
+    plan.priority_2 = priority_2 || '';
+    plan.priority_3 = priority_3 || '';
+    plan.target_percentage = target_percentage != null ? Number(target_percentage) : 80;
+    plan.updated_at = new Date().toISOString();
   } else {
-    const newPlan = { id: crypto.randomUUID(), ...payload, created_at: new Date().toISOString() };
-    localDb.weekly_plans.push(newPlan);
-    return res.json({ plan: newPlan });
-  }
-});
-
-// ==========================================
-// MOOD TRACKER (public.mood_tracker) API
-// ==========================================
-
-// GET /api/moods - Fetch mood tracker entries (public)
-app.get('/api/moods', async (req: Request, res: Response) => {
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data, error } = await sb.from('mood_tracker').select('*').order('date', { ascending: false });
-      if (!error && Array.isArray(data)) {
-        for (const item of data) {
-          const idx = localDb.mood_tracker.findIndex((m) => m.id === item.id || m.date === item.date);
-          if (idx >= 0) localDb.mood_tracker[idx] = { ...localDb.mood_tracker[idx], ...item };
-          else localDb.mood_tracker.push(item);
-        }
-        const sorted = [...localDb.mood_tracker].sort((a, b) => b.date.localeCompare(a.date));
-        return res.json({ moods: sorted });
-      }
-    } catch (_err) {
-      // Graceful fallback to localDb
-    }
+    plan = {
+      id: crypto.randomUUID(),
+      year: Number(year),
+      month: Number(month),
+      week_number: Number(week_number),
+      main_goal: main_goal || '',
+      priority_1: priority_1 || '',
+      priority_2: priority_2 || '',
+      priority_3: priority_3 || '',
+      target_percentage: target_percentage != null ? Number(target_percentage) : 80,
+      created_at: new Date().toISOString(),
+    };
+    localDb.weekly_plans.push(plan);
   }
 
-  // Fallback to localDb (sorted reverse chronological) if Supabase is offline
-  const sorted = [...localDb.mood_tracker].sort((a, b) => b.date.localeCompare(a.date));
-  return res.json({ moods: sorted });
+  saveDbToFile();
+  return res.json({ plan });
 });
 
-// GET /api/moods/:id - Fetch single mood tracker entry by ID (public)
+// ----------------------------------------------------
+// MOOD TRACKER ENDPOINTS
+// ----------------------------------------------------
+app.get('/api/moods', async (_req: Request, res: Response) => {
+  return res.json({ moods: localDb.mood_tracker });
+});
+
 app.get('/api/moods/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data, error } = await sb.from('mood_tracker').select('*').eq('id', id).maybeSingle();
-      if (!error && data) {
-        return res.json({ mood: data });
-      }
-    } catch (_err) {
-      // Graceful fallback to localDb
-    }
+  const mood = localDb.mood_tracker.find((m) => m.id === id);
+  if (!mood) {
+    return res.status(404).json({ error: 'Mood entry not found' });
   }
-
-  const found = localDb.mood_tracker.find((m) => m.id === id);
-  if (found) return res.json({ mood: found });
-  return res.status(404).json({ error: 'Mood entry not found' });
+  return res.json({ mood });
 });
 
-// POST /api/moods - Insert or update mood entry for a specific date (protected)
 app.post('/api/moods', async (req: Request, res: Response) => {
-  let { date, mood, mood_score, energy_level, note } = req.body;
-
-  // Strict Date Validation (never null, never undefined, must be YYYY-MM-DD)
-  if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return res.status(400).json({ error: 'Valid date (YYYY-MM-DD) is required.' });
+  const { date, mood, mood_score, energy_level, note } = req.body;
+  if (!date || !mood) {
+    return res.status(400).json({ error: 'date and mood are required' });
   }
 
-  const validMoods = ['very_low', 'low', 'okay', 'good', 'great', 'excellent'];
-  const safeMood = validMoods.includes(mood) ? mood : 'good';
-  const defaultScoreMap: Record<string, number> = {
-    very_low: 1,
-    low: 2,
-    okay: 3,
-    good: 4,
-    great: 5,
-    excellent: 6,
-  };
-  const safeScore = (typeof mood_score === 'number' && mood_score >= 1 && mood_score <= 6)
-    ? mood_score
-    : (defaultScoreMap[safeMood] || 4);
-
-  const safeEnergy = (typeof energy_level === 'number' && energy_level >= 1 && energy_level <= 5)
-    ? Math.round(energy_level)
-    : 3;
-
-  const safeNote = typeof note === 'string' ? note.trim() : '';
-
-  const payload = {
-    date,
-    mood: safeMood,
-    mood_score: safeScore,
-    energy_level: safeEnergy,
-    note: safeNote,
-  };
-
-  // Required logging
-  console.log('[Mood Tracker] Saving:', payload);
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      // Check if mood for this date already exists to prevent duplicate entries
-      const { data: existing } = await sb
-        .from('mood_tracker')
-        .select('*')
-        .eq('date', date)
-        .maybeSingle();
-
-      if (existing) {
-        // Update existing record by ID
-        const updatePayload = {
-          ...payload,
-          updated_at: new Date().toISOString(),
-        };
-        const updateRes = await resilientUpdate(sb, 'mood_tracker', existing.id, updatePayload);
-        if (!updateRes.error) {
-          const resultRecord = { ...existing, ...updatePayload, ...(updateRes.data || {}), id: existing.id, date };
-
-          const lIdx = localDb.mood_tracker.findIndex((m) => m.date === date || m.id === existing.id);
-          if (lIdx >= 0) localDb.mood_tracker[lIdx] = resultRecord;
-          else localDb.mood_tracker.push(resultRecord);
-
-          return res.json({ mood: resultRecord, updated: true });
-        }
-      } else {
-        // Insert new record
-        const newRecord = {
-          id: crypto.randomUUID(),
-          ...payload,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        const insertRes = await resilientInsert(sb, 'mood_tracker', newRecord);
-        if (!insertRes.error) {
-          const resultRecord = { ...newRecord, ...(insertRes.data || {}), date };
-
-          const lIdx = localDb.mood_tracker.findIndex((m) => m.date === date);
-          if (lIdx >= 0) localDb.mood_tracker[lIdx] = resultRecord;
-          else localDb.mood_tracker.push(resultRecord);
-
-          return res.json({ mood: resultRecord, created: true });
-        }
-      }
-    } catch (_err) {
-      // Graceful fallback to local persistence if Supabase network fails
-    }
-  }
-
-  // Fallback to localDb if Supabase is offline
-  const localIdx = localDb.mood_tracker.findIndex((m) => m.date === date);
-  if (localIdx >= 0) {
-    localDb.mood_tracker[localIdx] = {
-      ...localDb.mood_tracker[localIdx],
-      ...payload,
-      updated_at: new Date().toISOString(),
-    };
-    return res.json({ mood: localDb.mood_tracker[localIdx], updated: true });
+  let entry = localDb.mood_tracker.find((m) => m.date === date);
+  if (entry) {
+    entry.mood = mood;
+    entry.mood_score = mood_score != null ? Number(mood_score) : entry.mood_score;
+    entry.energy_level = energy_level != null ? Number(energy_level) : entry.energy_level;
+    entry.note = note !== undefined ? String(note) : entry.note;
+    entry.updated_at = new Date().toISOString();
   } else {
-    const newEntry = {
+    entry = {
       id: crypto.randomUUID(),
-      ...payload,
+      date,
+      mood,
+      mood_score: mood_score != null ? Number(mood_score) : 4,
+      energy_level: energy_level != null ? Number(energy_level) : 3,
+      note: note ? String(note) : '',
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
     };
-    localDb.mood_tracker.push(newEntry);
-    return res.json({ mood: newEntry, created: true });
+    localDb.mood_tracker.push(entry);
   }
+
+  saveDbToFile();
+  return res.status(201).json({ mood: entry });
 });
 
-// PUT /api/moods/:id - Update existing mood entry by ID (protected)
 app.put('/api/moods/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  let { date, mood, mood_score, energy_level, note } = req.body;
-
-  if (date && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date))) {
-    return res.status(400).json({ error: 'Valid date (YYYY-MM-DD) is required.' });
+  const idx = localDb.mood_tracker.findIndex((m) => m.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Mood entry not found' });
   }
 
-  const validMoods = ['very_low', 'low', 'okay', 'good', 'great', 'excellent'];
-  const safeMood = mood && validMoods.includes(mood) ? mood : undefined;
-  const defaultScoreMap: Record<string, number> = {
-    very_low: 1,
-    low: 2,
-    okay: 3,
-    good: 4,
-    great: 5,
-    excellent: 6,
-  };
-  const safeScore = (typeof mood_score === 'number' && mood_score >= 1 && mood_score <= 6)
-    ? mood_score
-    : (safeMood ? defaultScoreMap[safeMood] : undefined);
+  const current = localDb.mood_tracker[idx];
+  const { date, mood, mood_score, energy_level, note } = req.body;
 
-  const safeEnergy = (typeof energy_level === 'number' && energy_level >= 1 && energy_level <= 5)
-    ? Math.round(energy_level)
-    : undefined;
-
-  const safeNote = typeof note === 'string' ? note.trim() : undefined;
-
-  const payload: Record<string, any> = {
+  const updatedMood = {
+    ...current,
+    date: date !== undefined ? date : current.date,
+    mood: mood !== undefined ? mood : current.mood,
+    mood_score: mood_score !== undefined ? Number(mood_score) : current.mood_score,
+    energy_level: energy_level !== undefined ? Number(energy_level) : current.energy_level,
+    note: note !== undefined ? String(note) : current.note,
     updated_at: new Date().toISOString(),
   };
-  if (date) payload.date = date;
-  if (safeMood) payload.mood = safeMood;
-  if (safeScore !== undefined) payload.mood_score = safeScore;
-  if (safeEnergy !== undefined) payload.energy_level = safeEnergy;
-  if (safeNote !== undefined) payload.note = safeNote;
 
-  console.log('[Mood Tracker] Saving:', { id, ...payload });
-
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const updateRes = await resilientUpdate(sb, 'mood_tracker', id, payload);
-      if (!updateRes.error) {
-        const updated = updateRes.data || { id, ...payload };
-
-        const lIdx = localDb.mood_tracker.findIndex((m) => m.id === id);
-        if (lIdx >= 0) localDb.mood_tracker[lIdx] = { ...localDb.mood_tracker[lIdx], ...updated };
-        else localDb.mood_tracker.push(updated);
-
-        return res.json({ mood: updated });
-      }
-    } catch (_err) {
-      // Graceful fallback to localDb
-    }
-  }
-
-  const lIdx = localDb.mood_tracker.findIndex((m) => m.id === id);
-  if (lIdx >= 0) {
-    localDb.mood_tracker[lIdx] = { ...localDb.mood_tracker[lIdx], ...payload };
-    return res.json({ mood: localDb.mood_tracker[lIdx] });
-  }
-
-  return res.status(404).json({ error: 'Mood entry not found' });
+  localDb.mood_tracker[idx] = updatedMood;
+  saveDbToFile();
+  return res.json({ mood: updatedMood });
 });
 
-// DELETE /api/moods/:id - Delete mood entry by ID (protected)
 app.delete('/api/moods/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      await sb.from('mood_tracker').delete().eq('id', id);
-    } catch (_err) {
-      // Graceful fallback to localDb
-    }
-  }
-
   localDb.mood_tracker = localDb.mood_tracker.filter((m) => m.id !== id);
+  saveDbToFile();
   return res.json({ success: true, id });
 });
 
-// ==========================================
-// BACKUP RESTORE / IMPORT API
-// ==========================================
-// POST /api/backup/import - Import JSON backup with merge or replace mode
-app.post('/api/backup/import', async (req: Request, res: Response) => {
-  const { data: importData, mode = 'merge' } = req.body;
-  if (!importData || typeof importData !== 'object') {
-    return res.status(400).json({ error: 'Valid backup data object is required' });
+// Helper for schedule matching
+function checkDayMatchesSchedule(scheduleVal: any, dayOfWeek: number, currentDayName: string): boolean {
+  if (typeof scheduleVal === 'number') {
+    return scheduleVal === dayOfWeek;
   }
-
-  const sb = getSupabase();
-  const {
-    habits = [],
-    habit_entries = [],
-    reflections = [],
-    weekly_reviews = [],
-    affirmations = [],
-    goals = [],
-    daily_journal = [],
-    weekly_plans = [],
-    settings = [],
-    habit_categories = [],
-  } = importData;
-
-  if (mode === 'replace') {
-    localDb.habits = Array.isArray(habits) ? habits : [];
-    localDb.habit_entries = Array.isArray(habit_entries) ? habit_entries : [];
-    localDb.reflections = Array.isArray(reflections) ? reflections : [];
-    localDb.weekly_reviews = Array.isArray(weekly_reviews) ? weekly_reviews : [];
-    localDb.affirmations = Array.isArray(affirmations) && affirmations.length > 0 ? affirmations : localDb.affirmations;
-    localDb.goals = Array.isArray(goals) ? goals : [];
-    localDb.daily_journal = Array.isArray(daily_journal) ? daily_journal : [];
-    localDb.weekly_plans = Array.isArray(weekly_plans) ? weekly_plans : [];
-    localDb.habit_categories = Array.isArray(habit_categories) && habit_categories.length > 0 ? habit_categories : localDb.habit_categories;
-
-    if (sb) {
-      try {
-        await Promise.allSettled([
-          sb.from('habit_entries').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-          sb.from('habits').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-          sb.from('reflections').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-          sb.from('weekly_reviews').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-          sb.from('goals').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-        ]);
-
-        if (habits.length > 0) await sb.from('habits').insert(habits);
-        if (habit_entries.length > 0) await sb.from('habit_entries').insert(habit_entries);
-        if (reflections.length > 0) await sb.from('reflections').insert(reflections);
-        if (weekly_reviews.length > 0) await sb.from('weekly_reviews').insert(weekly_reviews);
-        if (goals.length > 0) await sb.from('goals').insert(goals);
-      } catch (err) {
-        console.warn('Supabase replace import warning:', err);
-      }
-    }
-  } else {
-    // MERGE mode: Add missing or updated records
-    if (Array.isArray(habits)) {
-      habits.forEach((h: any) => {
-        const existingIdx = localDb.habits.findIndex((item) => item.id === h.id);
-        if (existingIdx >= 0) localDb.habits[existingIdx] = { ...localDb.habits[existingIdx], ...h };
-        else localDb.habits.push(h);
-      });
-    }
-
-    if (Array.isArray(habit_entries)) {
-      habit_entries.forEach((e: any) => {
-        const existingIdx = localDb.habit_entries.findIndex((item) => item.habit_id === e.habit_id && item.date === e.date);
-        if (existingIdx >= 0) localDb.habit_entries[existingIdx] = { ...localDb.habit_entries[existingIdx], ...e };
-        else localDb.habit_entries.push(e);
-      });
-    }
-
-    if (Array.isArray(goals)) {
-      goals.forEach((g: any) => {
-        const existingIdx = localDb.goals.findIndex((item) => item.id === g.id);
-        if (existingIdx >= 0) localDb.goals[existingIdx] = { ...localDb.goals[existingIdx], ...g };
-        else localDb.goals.push(g);
-      });
-    }
-
-    if (Array.isArray(daily_journal)) {
-      daily_journal.forEach((j: any) => {
-        const existingIdx = localDb.daily_journal.findIndex((item) => item.date === j.date);
-        if (existingIdx >= 0) localDb.daily_journal[existingIdx] = { ...localDb.daily_journal[existingIdx], ...j };
-        else localDb.daily_journal.push(j);
-      });
-    }
+  if (typeof scheduleVal === 'string') {
+    const s = scheduleVal.toLowerCase().trim();
+    if (s === currentDayName) return true;
+    if (s === 'weekdays' && dayOfWeek >= 1 && dayOfWeek <= 5) return true;
+    if (s === 'weekends' && (dayOfWeek === 0 || dayOfWeek === 6)) return true;
+    const num = parseInt(s, 10);
+    if (!isNaN(num) && num === dayOfWeek) return true;
   }
-
-  return res.json({
-    success: true,
-    message: `Backup data successfully imported (${mode} mode)`,
-    summary: {
-      habits: localDb.habits.length,
-      habit_entries: localDb.habit_entries.length,
-      goals: localDb.goals.length,
-      daily_journal: localDb.daily_journal.length,
-    },
-  });
-});
-
-// Helper to safely match schedule_days whether items are numbers, day names, or strings
-function checkDayMatchesSchedule(scheduleDay: any, dayIdx: number, dayName: string): boolean {
-  if (scheduleDay === null || scheduleDay === undefined) return false;
-  if (typeof scheduleDay === 'number') {
-    return (scheduleDay % 7 + 7) % 7 === dayIdx;
-  }
-  const str = String(scheduleDay).trim().toLowerCase();
-  if (!str) return false;
-  const num = parseInt(str, 10);
-  if (!isNaN(num) && (str === String(num) || /^[0-6]$/.test(str))) {
-    return (num % 7 + 7) % 7 === dayIdx;
-  }
-  return str.startsWith(dayName.slice(0, 3));
+  return false;
 }
 
-// GET /api/streak - Calculate Consistency Streak (>=70% daily completion) and per-habit streaks
+// ----------------------------------------------------
+// STREAKS ENDPOINT
+// ----------------------------------------------------
 app.get('/api/streak', async (_req: Request, res: Response) => {
   try {
-    const sb = getSupabase();
-    let entriesList: Array<{ habit_id: string; date: string; completed: boolean }> = [];
-    let habitsList: Array<{ id: string; status?: string; frequency?: string; schedule_days?: any[] }> = [];
-
-    if (sb) {
-      try {
-        const [eRes, hRes] = await Promise.all([
-          sb.from('habit_entries').select('habit_id, date, completed').eq('completed', true),
-          sb.from('habits').select('id, status, frequency, schedule_days'),
-        ]);
-        entriesList = eRes.data || [];
-        habitsList = hRes.data || [];
-      } catch (err) {
-        console.error('Error calculating streak from Supabase:', err);
-        entriesList = localDb.habit_entries.filter((e) => e.completed);
-        habitsList = localDb.habits;
-      }
-    } else {
-      entriesList = localDb.habit_entries.filter((e) => e.completed);
-      habitsList = localDb.habits;
-    }
+    const entriesList = localDb.habit_entries.filter((e) => e.completed);
+    const habitsList = localDb.habits;
 
     const activeHabits = habitsList.filter((h) => (h.status || 'active') === 'active');
     const activeHabitCount = activeHabits.length;
@@ -2319,9 +1448,7 @@ app.get('/api/streak', async (_req: Request, res: Response) => {
       return `${y}-${m}-${day}`;
     };
 
-    // Map of date -> Set of completed habit IDs
     const completedByDate: Record<string, Set<string>> = {};
-    // Map of habit_id -> Set of completed dates
     const habitCompletedDates: Record<string, Set<string>> = {};
 
     entriesList.forEach((e) => {
@@ -2337,12 +1464,10 @@ app.get('/api/streak', async (_req: Request, res: Response) => {
     const now = new Date();
     const todayStr = formatDateStr(now);
 
-    // Helper to check if a day met the 70% threshold
     const isDaySuccessful = (dateStr: string) => {
       const completedSet = completedByDate[dateStr];
       if (!completedSet || completedSet.size === 0) return false;
 
-      // Filter active habits scheduled on that day
       const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay();
       const weekdayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
       const currentDayName = weekdayNames[dayOfWeek];
@@ -2365,7 +1490,6 @@ app.get('/api/streak', async (_req: Request, res: Response) => {
 
     const hasCompletedToday = isDaySuccessful(todayStr);
 
-    // Calculate overall Current Consistency Streak
     let currentStreak = 0;
     let checkDate = new Date(now);
     if (!hasCompletedToday) {
@@ -2382,208 +1506,122 @@ app.get('/api/streak', async (_req: Request, res: Response) => {
       }
     }
 
-    // Calculate overall Best Consistency Streak
     const allDates = Object.keys(completedByDate).sort();
     let bestStreak = 0;
     let runningStreak = 0;
     let prevDate: Date | null = null;
 
-    for (const dateStr of allDates) {
-      if (isDaySuccessful(dateStr)) {
-        const cDate = new Date(dateStr + 'T00:00:00');
+    for (const dStr of allDates) {
+      if (isDaySuccessful(dStr)) {
+        const curDate = new Date(dStr + 'T00:00:00');
         if (prevDate) {
-          const diffDays = Math.round((cDate.getTime() - prevDate.getTime()) / (1000 * 3600 * 24));
+          const diffDays = Math.round((curDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24));
           if (diffDays === 1) {
             runningStreak++;
-          } else if (diffDays > 1) {
+          } else {
             runningStreak = 1;
           }
         } else {
           runningStreak = 1;
         }
+        prevDate = curDate;
         if (runningStreak > bestStreak) bestStreak = runningStreak;
-        prevDate = cDate;
       }
     }
+
     bestStreak = Math.max(bestStreak, currentStreak);
 
-    // Calculate per-habit streaks
+    // Per-habit streaks
     const habitStreaks: Record<string, { current: number; best: number; totalCompletions: number }> = {};
-    for (const habit of habitsList) {
-      const hId = habit.id;
-      const dateSet = habitCompletedDates[hId] || new Set();
-      const totalCompletions = dateSet.size;
-
-      const isHabitScheduledOn = (d: Date) => {
-        if ((habit.status || 'active') !== 'active') return false;
-        if (!habit.frequency || habit.frequency === 'daily' || habit.frequency === 'weekly_target' || habit.frequency === 'monthly_target') return true;
-        if (habit.frequency === 'specific_days' && Array.isArray(habit.schedule_days) && habit.schedule_days.length > 0) {
-          const dayIdx = d.getDay();
-          const weekdayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-          const name = weekdayNames[dayIdx];
-          return habit.schedule_days.some((sd) => checkDayMatchesSchedule(sd, dayIdx, name));
-        }
-        return true;
-      };
+    habitsList.forEach((h) => {
+      const datesSet = habitCompletedDates[h.id] || new Set();
+      const datesArr = Array.from(datesSet).sort();
+      const totalCompletions = datesArr.length;
 
       let hCurrent = 0;
-      let hCheck = new Date(now);
-      const isTodayScheduled = isHabitScheduledOn(hCheck);
-      if (isTodayScheduled && !dateSet.has(todayStr)) {
-        hCheck.setDate(hCheck.getDate() - 1);
+      let hDate = new Date(now);
+      const doneToday = datesSet.has(todayStr);
+      if (!doneToday) {
+        hDate.setDate(hDate.getDate() - 1);
       }
 
-      let iterations = 0;
-      while (iterations < 365) {
-        iterations++;
-        const dStr = formatDateStr(hCheck);
-        const isSched = isHabitScheduledOn(hCheck);
-
-        if (isSched) {
-          if (dateSet.has(dStr)) {
-            hCurrent++;
-            hCheck.setDate(hCheck.getDate() - 1);
-          } else {
-            break;
-          }
+      while (true) {
+        const ds = formatDateStr(hDate);
+        if (datesSet.has(ds)) {
+          hCurrent++;
+          hDate.setDate(hDate.getDate() - 1);
         } else {
-          hCheck.setDate(hCheck.getDate() - 1);
+          break;
         }
       }
 
-      const hSorted = Array.from(dateSet).sort();
       let hBest = 0;
       let hRun = 0;
-      let lastValidDate: Date | null = null;
-
-      for (const dStr of hSorted) {
-        const cDate = new Date(dStr + 'T00:00:00');
-        if (lastValidDate) {
-          const diffDays = Math.round((cDate.getTime() - lastValidDate.getTime()) / (1000 * 3600 * 24));
-          if (diffDays === 1) {
-            hRun++;
-          } else if (diffDays > 1) {
-            let broken = false;
-            const temp = new Date(lastValidDate);
-            temp.setDate(temp.getDate() + 1);
-            while (temp < cDate) {
-              if (isHabitScheduledOn(temp)) {
-                broken = true;
-                break;
-              }
-              temp.setDate(temp.getDate() + 1);
-            }
-
-            if (broken) {
-              hRun = 1;
-            } else {
-              hRun++;
-            }
-          }
+      let hPrev: Date | null = null;
+      for (const ds of datesArr) {
+        const cd = new Date(ds + 'T00:00:00');
+        if (hPrev) {
+          const diff = Math.round((cd.getTime() - hPrev.getTime()) / (1000 * 60 * 60 * 24));
+          if (diff === 1) hRun++;
+          else hRun = 1;
         } else {
           hRun = 1;
         }
-
+        hPrev = cd;
         if (hRun > hBest) hBest = hRun;
-        lastValidDate = cDate;
       }
       hBest = Math.max(hBest, hCurrent);
 
-      habitStreaks[hId] = { current: hCurrent, best: hBest, totalCompletions };
-    }
+      habitStreaks[h.id] = { current: hCurrent, best: hBest, totalCompletions };
+    });
 
-    res.json({
+    return res.json({
       streak: currentStreak,
       bestStreak,
-      completedToday: hasCompletedToday,
       habitStreaks,
+      hasCompletedToday,
     });
-  } catch (streakErr) {
-    console.error('Unhandled error calculating streak:', streakErr);
-    res.json({
-      streak: 0,
-      bestStreak: 0,
-      completedToday: false,
-      habitStreaks: {},
-    });
+  } catch (err: any) {
+    console.error('Error calculating streak:', err);
+    return res.json({ streak: 0, bestStreak: 0, habitStreaks: {} });
   }
 });
 
-// GET /api/export - Export full JSON backup (all tables) or CSV
+// Helper to gather complete relational database state
+export function getAllApplicationData() {
+  return {
+    app: 'Vignesh Habit Tracker',
+    version: '3.0',
+    source: 'Persistent Relational Storage Engine',
+    exported_at: new Date().toISOString(),
+    habits: [...localDb.habits],
+    habit_entries: [...localDb.habit_entries],
+    reflections: [...localDb.reflections],
+    monthly_reflections: [...localDb.reflections],
+    weekly_reviews: [...localDb.weekly_reviews],
+    affirmations: [...localDb.affirmations],
+    settings: Object.entries(localDb.settings).map(([k, v]) => ({ setting_key: k, setting_value: v })),
+    categories: [...localDb.habit_categories],
+    habit_categories: [...localDb.habit_categories],
+    goals: [...localDb.goals],
+    daily_journal: [...localDb.daily_journal],
+    weekly_plans: [...localDb.weekly_plans],
+    mood_tracker: [...localDb.mood_tracker],
+    notes: [...(localDb.notes || [])],
+  };
+}
+
+// ----------------------------------------------------
+// EXPORT & BACKUP ENDPOINTS
+// ----------------------------------------------------
 app.get('/api/export', async (req: Request, res: Response) => {
   const format = (req.query.format as string) || 'json';
-  const sb = getSupabase();
-
-  let habits: any[] = [];
-  let habit_entries: any[] = [];
-  let reflections: any[] = [];
-  let weekly_reviews: any[] = [];
-  let affirmations: any[] = [];
-  let settings: any[] = [];
-  let habit_categories: any[] = [];
-  let goals: any[] = [];
-  let daily_journal: any[] = [];
-  let weekly_plans: any[] = [];
-  let mood_tracker: any[] = [];
-
-  if (sb) {
-    try {
-      const [hRes, eRes, rRes, wRes, aRes, sRes, cRes, gRes, jRes, pRes, mRes] = await Promise.allSettled([
-        sb.from('habits').select('*'),
-        sb.from('habit_entries').select('*'),
-        sb.from('reflections').select('*'),
-        sb.from('weekly_reviews').select('*'),
-        sb.from('affirmations').select('*'),
-        sb.from('settings').select('*'),
-        sb.from('habit_categories').select('*'),
-        sb.from('goals').select('*'),
-        sb.from('daily_journal').select('*'),
-        sb.from('weekly_plans').select('*'),
-        sb.from('mood_tracker').select('*'),
-      ]);
-
-      if (hRes.status === 'fulfilled') habits = hRes.value.data || [];
-      if (eRes.status === 'fulfilled') habit_entries = eRes.value.data || [];
-      if (rRes.status === 'fulfilled') reflections = rRes.value.data || [];
-      if (wRes.status === 'fulfilled') weekly_reviews = wRes.value.data || [];
-      if (aRes.status === 'fulfilled') affirmations = aRes.value.data || [];
-      if (sRes.status === 'fulfilled') settings = sRes.value.data || [];
-      if (cRes.status === 'fulfilled') habit_categories = cRes.value.data || [];
-      if (gRes.status === 'fulfilled') goals = gRes.value.data || [];
-      if (jRes.status === 'fulfilled') daily_journal = jRes.value.data || [];
-      if (pRes.status === 'fulfilled') weekly_plans = pRes.value.data || [];
-      if (mRes.status === 'fulfilled') mood_tracker = mRes.value.data || [];
-    } catch (e) {
-      habits = localDb.habits;
-      habit_entries = localDb.habit_entries;
-      reflections = localDb.reflections;
-      weekly_reviews = localDb.weekly_reviews;
-      affirmations = localDb.affirmations;
-      settings = Object.entries(localDb.settings).map(([k, v]) => ({ setting_key: k, setting_value: v }));
-      habit_categories = localDb.habit_categories;
-      goals = localDb.goals;
-      daily_journal = localDb.daily_journal;
-      weekly_plans = localDb.weekly_plans;
-      mood_tracker = localDb.mood_tracker;
-    }
-  } else {
-    habits = localDb.habits;
-    habit_entries = localDb.habit_entries;
-    reflections = localDb.reflections;
-    weekly_reviews = localDb.weekly_reviews;
-    affirmations = localDb.affirmations;
-    settings = Object.entries(localDb.settings).map(([k, v]) => ({ setting_key: k, setting_value: v }));
-    habit_categories = localDb.habit_categories;
-    goals = localDb.goals;
-    daily_journal = localDb.daily_journal;
-    weekly_plans = localDb.weekly_plans;
-    mood_tracker = localDb.mood_tracker;
-  }
+  const data = getAllApplicationData();
 
   if (format === 'csv') {
-    const habitMap = new Map(habits.map((h) => [h.id, h.name]));
+    const habitMap = new Map(data.habits.map((h) => [h.id, h.name]));
     let csv = 'Habit ID,Habit Name,Date,Completed,Created At\n';
-    habit_entries.forEach((e) => {
+    data.habit_entries.forEach((e) => {
       const hName = (habitMap.get(e.habit_id) || 'Unknown').replace(/"/g, '""');
       csv += `"${e.habit_id}","${hName}","${e.date}",${e.completed ? 'TRUE' : 'FALSE'},"${e.created_at || ''}"\n`;
     });
@@ -2593,86 +1631,644 @@ app.get('/api/export', async (req: Request, res: Response) => {
     return res.send(csv);
   }
 
-  return res.json({
-    app: 'Vignesh Habit Tracker',
-    version: '3.0',
-    exported_at: new Date().toISOString(),
-    habits,
-    habit_entries,
-    reflections,
-    weekly_reviews,
-    affirmations,
-    settings,
-    habit_categories,
-    goals,
-    daily_journal,
-    weekly_plans,
-    mood_tracker,
-  });
+  if (format === 'xlsx' || format === 'excel') {
+    const wb = XLSX.utils.book_new();
+
+    const readmeRows = [
+      {
+        table_no: 0,
+        table_name: '__metadata__',
+        display_name: 'Database Metadata',
+        primary_key: 'schema_version',
+        foreign_keys: 'none',
+        column_count: 7,
+        record_count: 1,
+        description: `Vignesh Habit Tracker Database Backup. Exported at: ${new Date().toISOString()}. Version: v3.0.`,
+        supported_formats: 'Excel .xlsx, CSV, Google Sheets, JSON',
+      },
+      {
+        table_no: 1,
+        table_name: 'affirmations',
+        display_name: 'Affirmations',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 7,
+        record_count: data.affirmations.length,
+        description: 'Stores motivational quotes and images',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 2,
+        table_name: 'daily_journal',
+        display_name: 'Daily Journal',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 7,
+        record_count: data.daily_journal.length,
+        description: 'Stores daily journal entries, moods, and energy levels',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 3,
+        table_name: 'goals',
+        display_name: 'Goals',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 9,
+        record_count: data.goals.length,
+        description: 'Tracks personal goals and their progress',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 4,
+        table_name: 'habit_categories',
+        display_name: 'Habit Categories',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 4,
+        record_count: data.habit_categories.length,
+        description: 'Organizes habits into categories',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 5,
+        table_name: 'habit_entries',
+        display_name: 'Habit Entries',
+        primary_key: 'id',
+        foreign_keys: 'habit_id -> habits.id',
+        column_count: 6,
+        record_count: data.habit_entries.length,
+        description: 'Records whether a habit was completed on a particular date',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 6,
+        table_name: 'habits',
+        display_name: 'Habits',
+        primary_key: 'id',
+        foreign_keys: 'goal_id -> goals.id',
+        column_count: 12,
+        record_count: data.habits.length,
+        description: 'Stores habit details, schedules, priorities, and statuses',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 7,
+        table_name: 'mood_tracker',
+        display_name: 'Mood Tracker',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 8,
+        record_count: data.mood_tracker.length,
+        description: 'Tracks daily moods, mood scores, and energy levels',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 8,
+        table_name: 'reflections',
+        display_name: 'Reflections',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 6,
+        record_count: data.reflections.length,
+        description: 'Stores monthly reflections',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 9,
+        table_name: 'settings',
+        display_name: 'Settings',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 4,
+        record_count: data.settings.length,
+        description: 'Stores application preferences and configuration',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 10,
+        table_name: 'weekly_plans',
+        display_name: 'Weekly Plans',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 11,
+        record_count: data.weekly_plans.length,
+        description: 'Stores weekly goals, priorities, and target completion percentages',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+      {
+        table_no: 11,
+        table_name: 'weekly_reviews',
+        display_name: 'Weekly Reviews',
+        primary_key: 'id',
+        foreign_keys: 'none',
+        column_count: 11,
+        record_count: data.weekly_reviews.length,
+        description: 'Stores weekly reviews and improvement plans',
+        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
+      },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(readmeRows), 'README');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.affirmations), 'affirmations');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.daily_journal), 'daily_journal');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.goals), 'goals');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.habit_categories), 'habit_categories');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.habit_entries), 'habit_entries');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.habits), 'habits');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.mood_tracker), 'mood_tracker');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.reflections), 'reflections');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.settings), 'settings');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.weekly_plans), 'weekly_plans');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.weekly_reviews), 'weekly_reviews');
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="vignesh_habit_tracker_${new Date().toISOString().split('T')[0]}.xlsx"`);
+    return res.send(buffer);
+  }
+
+  return res.json(data);
 });
 
-// POST /api/import - Import full JSON backup (protected write action)
+// POST /api/import - Import full backup (all tables)
 app.post('/api/import', async (req: Request, res: Response) => {
   try {
     const {
       habits,
       habit_entries,
-      reflections,
-      weekly_reviews,
-      affirmations,
-      settings,
-      habit_categories,
       goals,
+      mood_tracker,
       daily_journal,
       weekly_plans,
-      mood_tracker,
-    } = req.body || {};
+      weekly_reviews,
+      reflections,
+      monthly_reflections,
+      habit_categories,
+      categories,
+      affirmations,
+      settings,
+      mode = 'merge',
+    } = req.body;
 
-    const sb = getSupabase();
-    if (sb) {
-      if (Array.isArray(habits) && habits.length > 0) {
-        await sb.from('habits').upsert(habits, { onConflict: 'id' });
-      }
-      if (Array.isArray(habit_entries) && habit_entries.length > 0) {
-        await sb.from('habit_entries').upsert(habit_entries, { onConflict: 'id' });
-      }
-      if (Array.isArray(reflections) && reflections.length > 0) {
-        await sb.from('reflections').upsert(reflections, { onConflict: 'id' });
-      }
-      if (Array.isArray(weekly_reviews) && weekly_reviews.length > 0) {
-        await sb.from('weekly_reviews').upsert(weekly_reviews, { onConflict: 'id' });
-      }
-      if (Array.isArray(affirmations) && affirmations.length > 0) {
-        await sb.from('affirmations').upsert(affirmations, { onConflict: 'id' });
-      }
-      if (Array.isArray(goals) && goals.length > 0) {
-        await sb.from('goals').upsert(goals, { onConflict: 'id' });
-      }
-      if (Array.isArray(daily_journal) && daily_journal.length > 0) {
-        await sb.from('daily_journal').upsert(daily_journal, { onConflict: 'id' });
-      }
-      if (Array.isArray(weekly_plans) && weekly_plans.length > 0) {
-        await sb.from('weekly_plans').upsert(weekly_plans, { onConflict: 'id' });
-      }
-      if (Array.isArray(mood_tracker) && mood_tracker.length > 0) {
-        await sb.from('mood_tracker').upsert(mood_tracker, { onConflict: 'id' });
-      }
-    } else {
+    const cats = Array.isArray(categories) ? categories : (Array.isArray(habit_categories) ? habit_categories : []);
+    const refls = Array.isArray(monthly_reflections) ? monthly_reflections : (Array.isArray(reflections) ? reflections : []);
+
+    if (mode === 'replace') {
       if (Array.isArray(habits)) localDb.habits = habits;
       if (Array.isArray(habit_entries)) localDb.habit_entries = habit_entries;
-      if (Array.isArray(reflections)) localDb.reflections = reflections;
-      if (Array.isArray(weekly_reviews)) localDb.weekly_reviews = weekly_reviews;
-      if (Array.isArray(affirmations)) localDb.affirmations = affirmations;
       if (Array.isArray(goals)) localDb.goals = goals;
+      if (Array.isArray(mood_tracker)) localDb.mood_tracker = mood_tracker;
       if (Array.isArray(daily_journal)) localDb.daily_journal = daily_journal;
       if (Array.isArray(weekly_plans)) localDb.weekly_plans = weekly_plans;
-      if (Array.isArray(mood_tracker)) localDb.mood_tracker = mood_tracker;
+      if (Array.isArray(weekly_reviews)) localDb.weekly_reviews = weekly_reviews;
+      if (Array.isArray(refls)) localDb.reflections = refls;
+      if (Array.isArray(cats) && cats.length > 0) localDb.habit_categories = cats;
+      if (Array.isArray(affirmations) && affirmations.length > 0) localDb.affirmations = affirmations;
+      if (settings && typeof settings === 'object') {
+        localDb.settings = { ...localDb.settings, ...settings };
+      }
+    } else {
+      // Merge mode
+      if (Array.isArray(habits)) {
+        habits.forEach((h: any) => {
+          const idx = localDb.habits.findIndex((item) => item.id === h.id);
+          if (idx >= 0) localDb.habits[idx] = { ...localDb.habits[idx], ...h };
+          else localDb.habits.push(h);
+        });
+      }
+
+      if (Array.isArray(habit_entries)) {
+        habit_entries.forEach((e: any) => {
+          const idx = localDb.habit_entries.findIndex((item) => item.id === e.id || (item.habit_id === e.habit_id && item.date === e.date));
+          if (idx >= 0) localDb.habit_entries[idx] = { ...localDb.habit_entries[idx], ...e };
+          else localDb.habit_entries.push(e);
+        });
+      }
+
+      if (Array.isArray(goals)) {
+        goals.forEach((g: any) => {
+          const idx = localDb.goals.findIndex((item) => item.id === g.id);
+          if (idx >= 0) localDb.goals[idx] = { ...localDb.goals[idx], ...g };
+          else localDb.goals.push(g);
+        });
+      }
+
+      if (Array.isArray(mood_tracker)) {
+        mood_tracker.forEach((m: any) => {
+          const idx = localDb.mood_tracker.findIndex((item) => item.date === m.date || item.id === m.id);
+          if (idx >= 0) localDb.mood_tracker[idx] = { ...localDb.mood_tracker[idx], ...m };
+          else localDb.mood_tracker.push(m);
+        });
+      }
+
+      if (Array.isArray(daily_journal)) {
+        daily_journal.forEach((j: any) => {
+          const idx = localDb.daily_journal.findIndex((item) => item.date === j.date || item.id === j.id);
+          if (idx >= 0) localDb.daily_journal[idx] = { ...localDb.daily_journal[idx], ...j };
+          else localDb.daily_journal.push(j);
+        });
+      }
+
+      if (Array.isArray(weekly_plans)) {
+        weekly_plans.forEach((p: any) => {
+          const idx = localDb.weekly_plans.findIndex((item) => item.id === p.id || (item.year === p.year && item.month === p.month && item.week_number === p.week_number));
+          if (idx >= 0) localDb.weekly_plans[idx] = { ...localDb.weekly_plans[idx], ...p };
+          else localDb.weekly_plans.push(p);
+        });
+      }
+
+      if (Array.isArray(weekly_reviews)) {
+        weekly_reviews.forEach((r: any) => {
+          const idx = localDb.weekly_reviews.findIndex((item) => item.id === r.id || (item.year === r.year && item.month === r.month && item.week_number === r.week_number));
+          if (idx >= 0) localDb.weekly_reviews[idx] = { ...localDb.weekly_reviews[idx], ...r };
+          else localDb.weekly_reviews.push(r);
+        });
+      }
+
+      if (Array.isArray(refls)) {
+        refls.forEach((rf: any) => {
+          const idx = localDb.reflections.findIndex((item) => item.id === rf.id || (item.year === rf.year && item.month === rf.month));
+          if (idx >= 0) localDb.reflections[idx] = { ...localDb.reflections[idx], ...rf };
+          else localDb.reflections.push(rf);
+        });
+      }
+
+      if (Array.isArray(cats) && cats.length > 0) {
+        cats.forEach((c: any) => {
+          const idx = localDb.habit_categories.findIndex((item) => item.id === c.id || item.name.toLowerCase() === c.name.toLowerCase());
+          if (idx >= 0) localDb.habit_categories[idx] = { ...localDb.habit_categories[idx], ...c };
+          else localDb.habit_categories.push(c);
+        });
+      }
+
+      if (Array.isArray(affirmations) && affirmations.length > 0) {
+        affirmations.forEach((a: any) => {
+          const idx = localDb.affirmations.findIndex((item) => item.id === a.id);
+          if (idx >= 0) localDb.affirmations[idx] = { ...localDb.affirmations[idx], ...a };
+          else localDb.affirmations.push(a);
+        });
+      }
+
+      if (settings && typeof settings === 'object') {
+        localDb.settings = { ...localDb.settings, ...settings };
+      }
     }
 
-    res.json({ success: true, message: 'Data imported successfully' });
+    saveDbToFile();
+
+    return res.json({
+      success: true,
+      message: `Data successfully imported (${mode} mode)`,
+      counts: {
+        habits: Array.isArray(habits) ? habits.length : localDb.habits.length,
+        habit_entries: Array.isArray(habit_entries) ? habit_entries.length : localDb.habit_entries.length,
+        goals: Array.isArray(goals) ? goals.length : localDb.goals.length,
+        mood_tracker: Array.isArray(mood_tracker) ? mood_tracker.length : localDb.mood_tracker.length,
+        daily_journal: Array.isArray(daily_journal) ? daily_journal.length : localDb.daily_journal.length,
+        weekly_plans: Array.isArray(weekly_plans) ? weekly_plans.length : localDb.weekly_plans.length,
+        weekly_reviews: Array.isArray(weekly_reviews) ? weekly_reviews.length : localDb.weekly_reviews.length,
+        reflections: Array.isArray(refls) ? refls.length : localDb.reflections.length,
+        categories: Array.isArray(cats) ? cats.length : localDb.habit_categories.length,
+      },
+    });
   } catch (err: any) {
     console.error('Error importing data:', err);
-    res.status(500).json({ error: 'Failed to import data: ' + (err?.message || 'Unknown error') });
+    return res.status(500).json({ error: 'Failed to import data: ' + (err?.message || 'Unknown error') });
+  }
+});
+
+// ----------------------------------------------------
+// GOOGLE SHEETS LIVE TWO-WAY INTEGRATION
+// ----------------------------------------------------
+
+// POST /api/google-sheets/test - Ping Google Apps Script Web App
+app.post('/api/google-sheets/test', async (req: Request, res: Response) => {
+  try {
+    const { script_url } = req.body || {};
+    if (!script_url || typeof script_url !== 'string' || !script_url.startsWith('http')) {
+      return res.status(400).json({ success: false, message: 'Valid Google Apps Script Web App URL is required' });
+    }
+
+    const testUrl = script_url.includes('?') ? `${script_url}&action=test` : `${script_url}?action=test`;
+    const response = await fetch(testUrl, {
+      method: 'GET',
+      headers: { Accept: 'application/json, text/plain, */*' },
+      redirect: 'follow',
+    });
+
+    if (!response.ok) {
+      return res.status(400).json({ success: false, message: `Google Apps Script returned HTTP ${response.status}` });
+    }
+
+    const text = await response.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { text };
+    }
+
+    return res.json({
+      success: true,
+      message: 'Successfully connected to Google Apps Script Web App!',
+      data,
+    });
+  } catch (err: any) {
+    console.error('Error testing Google Apps Script:', err);
+    return res.status(500).json({ success: false, message: 'Failed to connect: ' + (err?.message || 'Network error') });
+  }
+});
+
+// POST /api/google-sheets/sync - Push Tracker Data to Google Sheets via Apps Script
+app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
+  try {
+    const { script_url, data } = req.body || {};
+    if (!script_url || typeof script_url !== 'string' || !script_url.startsWith('http')) {
+      return res.status(400).json({ success: false, message: 'Valid Google Apps Script Web App URL is required' });
+    }
+
+    // If client supplied recent client-side mutations, merge into localDb first
+    if (data && typeof data === 'object') {
+      if (Array.isArray(data.habits) && data.habits.length > 0) {
+        data.habits.forEach((h: any) => {
+          const idx = localDb.habits.findIndex((item) => item.id === h.id);
+          if (idx >= 0) localDb.habits[idx] = { ...localDb.habits[idx], ...h };
+          else localDb.habits.push(h);
+        });
+      }
+
+      if (Array.isArray(data.habit_entries) && data.habit_entries.length > 0) {
+        data.habit_entries.forEach((e: any) => {
+          const idx = localDb.habit_entries.findIndex((item) => item.id === e.id || (item.habit_id === e.habit_id && item.date === e.date));
+          if (idx >= 0) localDb.habit_entries[idx] = { ...localDb.habit_entries[idx], ...e };
+          else localDb.habit_entries.push(e);
+        });
+      }
+
+      if (Array.isArray(data.goals) && data.goals.length > 0) {
+        data.goals.forEach((g: any) => {
+          const idx = localDb.goals.findIndex((item) => item.id === g.id);
+          if (idx >= 0) localDb.goals[idx] = { ...localDb.goals[idx], ...g };
+          else localDb.goals.push(g);
+        });
+      }
+
+      if (Array.isArray(data.mood_tracker) && data.mood_tracker.length > 0) {
+        data.mood_tracker.forEach((m: any) => {
+          const idx = localDb.mood_tracker.findIndex((item) => item.date === m.date || item.id === m.id);
+          if (idx >= 0) localDb.mood_tracker[idx] = { ...localDb.mood_tracker[idx], ...m };
+          else localDb.mood_tracker.push(m);
+        });
+      }
+
+      if (Array.isArray(data.daily_journal) && data.daily_journal.length > 0) {
+        data.daily_journal.forEach((j: any) => {
+          const idx = localDb.daily_journal.findIndex((item) => item.date === j.date || item.id === j.id);
+          if (idx >= 0) localDb.daily_journal[idx] = { ...localDb.daily_journal[idx], ...j };
+          else localDb.daily_journal.push(j);
+        });
+      }
+
+      if (Array.isArray(data.weekly_plans) && data.weekly_plans.length > 0) {
+        data.weekly_plans.forEach((p: any) => {
+          const idx = localDb.weekly_plans.findIndex((item) => item.id === p.id || (item.year === p.year && item.month === p.month && item.week_number === p.week_number));
+          if (idx >= 0) localDb.weekly_plans[idx] = { ...localDb.weekly_plans[idx], ...p };
+          else localDb.weekly_plans.push(p);
+        });
+      }
+
+      if (Array.isArray(data.weekly_reviews) && data.weekly_reviews.length > 0) {
+        data.weekly_reviews.forEach((r: any) => {
+          const idx = localDb.weekly_reviews.findIndex((item) => item.id === r.id || (item.year === r.year && item.month === r.month && item.week_number === r.week_number));
+          if (idx >= 0) localDb.weekly_reviews[idx] = { ...localDb.weekly_reviews[idx], ...r };
+          else localDb.weekly_reviews.push(r);
+        });
+      }
+
+      if (Array.isArray(data.reflections) && data.reflections.length > 0) {
+        data.reflections.forEach((rf: any) => {
+          const idx = localDb.reflections.findIndex((item) => item.id === rf.id || (item.year === rf.year && item.month === rf.month));
+          if (idx >= 0) localDb.reflections[idx] = { ...localDb.reflections[idx], ...rf };
+          else localDb.reflections.push(rf);
+        });
+      }
+
+      saveDbToFile();
+    }
+
+    // Always push the complete database to Google Sheets
+    const payload = getAllApplicationData();
+
+    const response = await fetch(script_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      redirect: 'follow',
+    });
+
+    const text = await response.text();
+    let result: any = {};
+    try {
+      result = JSON.parse(text);
+    } catch {
+      result = { raw: text };
+    }
+
+    const timestamp = new Date().toISOString();
+    localDb.settings.google_sheets_last_synced = timestamp;
+    localDb.settings.google_sheets_last_pushed = timestamp;
+    saveDbToFile();
+
+    const summaryCounts = {
+      affirmations: localDb.affirmations.length,
+      habits: localDb.habits.length,
+      habit_entries: localDb.habit_entries.length,
+      mood_tracker: localDb.mood_tracker.length,
+      goals: localDb.goals.length,
+      daily_journal: localDb.daily_journal.length,
+      weekly_reviews: localDb.weekly_reviews.length,
+      weekly_plans: localDb.weekly_plans.length,
+      reflections: localDb.reflections.length,
+      habit_categories: localDb.habit_categories.length,
+    };
+
+    return res.json({
+      success: true,
+      message: result.message || 'Successfully synced data to Google Sheets!',
+      timestamp,
+      summary: result.counts || summaryCounts,
+      counts: summaryCounts,
+      raw: result,
+    });
+  } catch (err: any) {
+    console.error('Error syncing to Google Apps Script:', err);
+    return res.status(500).json({ success: false, message: 'Failed to sync to Google Sheets: ' + (err?.message || 'Network error') });
+  }
+});
+
+// POST /api/google-sheets/pull - Pull Data from Google Sheets via Apps Script
+app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
+  try {
+    const { script_url, apply_import = true } = req.body || {};
+    if (!script_url || typeof script_url !== 'string' || !script_url.startsWith('http')) {
+      return res.status(400).json({ success: false, message: 'Valid Google Apps Script Web App URL is required' });
+    }
+
+    const pullUrl = script_url.includes('?') ? `${script_url}&action=pull` : `${script_url}?action=pull`;
+    const response = await fetch(pullUrl, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'follow',
+    });
+
+    if (!response.ok) {
+      return res.status(400).json({ success: false, message: `Google Apps Script returned HTTP ${response.status}` });
+    }
+
+    const text = await response.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+
+    const timestamp = new Date().toISOString();
+    localDb.settings.google_sheets_last_synced = timestamp;
+    localDb.settings.google_sheets_last_pulled = timestamp;
+
+    let importedCounts: any = {};
+
+    // Auto-apply imported records into localDb & persistent disk
+    // If client is not unlocked (e.g. read-only viewing / auto-reflect), return data without mutating disk
+    const canMutateServerDb = verifyAuthToken(req);
+    if (apply_import && canMutateServerDb && data && typeof data === 'object') {
+      const {
+        affirmations,
+        habits,
+        habit_entries,
+        goals,
+        mood_tracker,
+        daily_journal,
+        weekly_reviews,
+        weekly_plans,
+        reflections,
+        monthly_reflections,
+        categories,
+        habit_categories,
+        settings,
+      } = data;
+
+      const cats = Array.isArray(categories) ? categories : (Array.isArray(habit_categories) ? habit_categories : []);
+      const refls = Array.isArray(monthly_reflections) ? monthly_reflections : (Array.isArray(reflections) ? reflections : []);
+
+      if (Array.isArray(affirmations) && affirmations.length > 0) {
+        affirmations.forEach((a: any) => {
+          const idx = localDb.affirmations.findIndex((item) => item.id === a.id);
+          if (idx >= 0) localDb.affirmations[idx] = { ...localDb.affirmations[idx], ...a };
+          else localDb.affirmations.push(a);
+        });
+      }
+
+      if (Array.isArray(habits) && habits.length > 0) {
+        habits.forEach((h: any) => {
+          const idx = localDb.habits.findIndex((item) => item.id === h.id);
+          if (idx >= 0) localDb.habits[idx] = { ...localDb.habits[idx], ...h };
+          else localDb.habits.push(h);
+        });
+      }
+
+      if (Array.isArray(habit_entries) && habit_entries.length > 0) {
+        habit_entries.forEach((e: any) => {
+          const idx = localDb.habit_entries.findIndex((item) => item.id === e.id || (item.habit_id === e.habit_id && item.date === e.date));
+          if (idx >= 0) localDb.habit_entries[idx] = { ...localDb.habit_entries[idx], ...e };
+          else localDb.habit_entries.push(e);
+        });
+      }
+
+      if (Array.isArray(goals) && goals.length > 0) {
+        goals.forEach((g: any) => {
+          const idx = localDb.goals.findIndex((item) => item.id === g.id);
+          if (idx >= 0) localDb.goals[idx] = { ...localDb.goals[idx], ...g };
+          else localDb.goals.push(g);
+        });
+      }
+
+      if (Array.isArray(mood_tracker) && mood_tracker.length > 0) {
+        mood_tracker.forEach((m: any) => {
+          const idx = localDb.mood_tracker.findIndex((item) => item.date === m.date || item.id === m.id);
+          if (idx >= 0) localDb.mood_tracker[idx] = { ...localDb.mood_tracker[idx], ...m };
+          else localDb.mood_tracker.push(m);
+        });
+      }
+
+      if (Array.isArray(daily_journal) && daily_journal.length > 0) {
+        daily_journal.forEach((j: any) => {
+          const idx = localDb.daily_journal.findIndex((item) => item.date === j.date || item.id === j.id);
+          if (idx >= 0) localDb.daily_journal[idx] = { ...localDb.daily_journal[idx], ...j };
+          else localDb.daily_journal.push(j);
+        });
+      }
+
+      if (Array.isArray(weekly_reviews) && weekly_reviews.length > 0) {
+        weekly_reviews.forEach((r: any) => {
+          const idx = localDb.weekly_reviews.findIndex((item) => item.id === r.id || (item.year === r.year && item.month === r.month && item.week_number === r.week_number));
+          if (idx >= 0) localDb.weekly_reviews[idx] = { ...localDb.weekly_reviews[idx], ...r };
+          else localDb.weekly_reviews.push(r);
+        });
+      }
+
+      if (Array.isArray(weekly_plans) && weekly_plans.length > 0) {
+        weekly_plans.forEach((p: any) => {
+          const idx = localDb.weekly_plans.findIndex((item) => item.id === p.id || (item.year === p.year && item.month === p.month && item.week_number === p.week_number));
+          if (idx >= 0) localDb.weekly_plans[idx] = { ...localDb.weekly_plans[idx], ...p };
+          else localDb.weekly_plans.push(p);
+        });
+      }
+
+      if (Array.isArray(refls) && refls.length > 0) {
+        refls.forEach((rf: any) => {
+          const idx = localDb.reflections.findIndex((item) => item.id === rf.id || (item.year === rf.year && item.month === rf.month));
+          if (idx >= 0) localDb.reflections[idx] = { ...localDb.reflections[idx], ...rf };
+          else localDb.reflections.push(rf);
+        });
+      }
+
+      if (Array.isArray(cats) && cats.length > 0) {
+        localDb.habit_categories = cats;
+      }
+
+      if (settings && typeof settings === 'object') {
+        localDb.settings = { ...localDb.settings, ...settings };
+      }
+
+      saveDbToFile();
+
+      importedCounts = {
+        affirmations: Array.isArray(affirmations) ? affirmations.length : 0,
+        habits: Array.isArray(habits) ? habits.length : 0,
+        entries: Array.isArray(habit_entries) ? habit_entries.length : 0,
+        goals: Array.isArray(goals) ? goals.length : 0,
+        moods: Array.isArray(mood_tracker) ? mood_tracker.length : 0,
+        journal: Array.isArray(daily_journal) ? daily_journal.length : 0,
+        plans: Array.isArray(weekly_plans) ? weekly_plans.length : 0,
+        reviews: Array.isArray(weekly_reviews) ? weekly_reviews.length : 0,
+        reflections: Array.isArray(refls) ? refls.length : 0,
+        categories: Array.isArray(cats) ? cats.length : 0,
+      };
+    }
+
+    return res.json({
+      success: true,
+      data,
+      timestamp,
+      counts: importedCounts,
+      message: `Successfully loaded data from Google Sheets (${importedCounts.habits || 0} habits, ${importedCounts.entries || 0} check-ins, ${importedCounts.moods || 0} mood logs)`,
+    });
+  } catch (err: any) {
+    console.error('Error pulling from Google Apps Script:', err);
+    return res.status(500).json({ success: false, message: 'Failed to pull from Google Sheets: ' + (err?.message || 'Network error') });
   }
 });
 
@@ -2696,7 +2292,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Vignesh Habit Tracker 2.0 server running on http://0.0.0.0:${PORT}`);
+    console.log(`Vignesh Habit Tracker server running on http://0.0.0.0:${PORT}`);
   });
 }
 

@@ -6,8 +6,8 @@ import { MONTH_NAMES, WEEKDAYS, formatDateKey, getTodayDateInfo } from '../utils
 import { getDayScheduledHabits, getHabitTrend, getHabitRiskStatus } from '../utils/scheduler';
 import { DashboardScoreCard } from './DashboardScoreCard';
 import { TodaySparklineCard } from './TodaySparklineCard';
-import { DailyJournalCard } from './DailyJournalCard';
 import { CompactMoodWidget } from './CompactMoodWidget';
+import { HRNotesCard } from './HRNotesCard';
 import { useProtectedAction } from '../context/ProtectedActionContext';
 
 interface TodayFocusProps {
@@ -23,6 +23,7 @@ interface TodayFocusProps {
   onSelectHabit?: (habit: Habit) => void;
   onSwitchToGrid?: () => void;
   onOpenGoals?: () => void;
+  onOpenJournalTab?: () => void;
   onOpenMoodTab?: () => void;
   onRequireUnlock?: () => void;
   onDuplicateHabit?: (habitId: string) => void;
@@ -41,6 +42,7 @@ export const TodayFocus: React.FC<TodayFocusProps> = ({
   onSelectHabit,
   onSwitchToGrid,
   onOpenGoals,
+  onOpenJournalTab,
   onOpenMoodTab,
   onRequireUnlock,
   onDuplicateHabit,
@@ -379,8 +381,13 @@ export const TodayFocus: React.FC<TodayFocusProps> = ({
         </div>
       )}
 
-      {/* 3. Daily Journal & Micro-Wins Card */}
-      <DailyJournalCard dateStr={todayDateStr} />
+      {/* My Journal & Personal Checklists */}
+      <HRNotesCard
+        title="My Journal"
+        subtitle="Daily reflections, thoughts, ideas & personal checklists"
+        showFullJournalLink={Boolean(onOpenJournalTab)}
+        onOpenFullJournal={onOpenJournalTab}
+      />
     </div>
   );
 };

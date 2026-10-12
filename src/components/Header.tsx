@@ -11,11 +11,13 @@ import {
   ChevronDown,
   Zap,
   BookOpen,
+  BookMarked,
   Target,
   Smile,
   Settings as SettingsIcon,
   Sun,
   Moon,
+  Database,
 } from 'lucide-react';
 import { SaveStatus, ViewTab } from '../types';
 
@@ -26,15 +28,18 @@ interface HeaderProps {
   onNextMonth?: () => void;
   onCurrentMonth?: () => void;
   saveStatus: SaveStatus;
-  isSupabase: boolean;
   isUnlocked?: boolean;
   onLock: () => void;
   onUnlockRequest?: () => void;
   activeTab: ViewTab;
   onTabChange: (tab: ViewTab) => void;
-  onExport: (format: 'json' | 'csv') => void;
+  onExport: (format: 'json' | 'csv' | 'xlsx') => void;
   isDarkMode?: boolean;
   onToggleTheme?: () => void;
+  googleSheetsStatus?: 'idle' | 'syncing' | 'synced' | 'error';
+  isGoogleSheetsLinked?: boolean;
+  onOpenGoogleSheets?: () => void;
+  isDatabaseSyncing?: boolean;
 }
 
 interface NavItem {
@@ -45,6 +50,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'today', label: 'Today', icon: Zap },
+  { id: 'journal', label: <><span className="hidden sm:inline lg:hidden xl:inline">My </span>Journal</>, icon: BookMarked },
   { id: 'goals', label: <><span className="hidden sm:inline lg:hidden xl:inline">Vision & </span>Goals</>, icon: Target },
   { id: 'grid', label: <><span className="hidden sm:inline lg:hidden xl:inline">Grid </span>View</>, icon: LayoutGrid },
   { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
@@ -61,7 +67,6 @@ export const Header: React.FC<HeaderProps> = ({
   onNextMonth,
   onCurrentMonth,
   saveStatus,
-  isSupabase,
   isUnlocked = false,
   onLock,
   onUnlockRequest,
@@ -70,6 +75,10 @@ export const Header: React.FC<HeaderProps> = ({
   onExport,
   isDarkMode = false,
   onToggleTheme,
+  googleSheetsStatus = 'idle',
+  isGoogleSheetsLinked = false,
+  onOpenGoogleSheets,
+  isDatabaseSyncing = false,
 }) => {
   const [isManuallyHidden, setIsManuallyHidden] = useState(false);
 
@@ -96,6 +105,15 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Mobile quick actions */}
             <div className="flex md:hidden items-center gap-1.5">
+              {isDatabaseSyncing && (
+                <div
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-[#EBF3EE] dark:bg-emerald-950/70 border border-[#5B8266]/40 dark:border-emerald-600/50 text-[11px] font-semibold text-[#2C523A] dark:text-emerald-300 shadow-2xs animate-pulse"
+                  title="Syncing with database in the background..."
+                >
+                  <RefreshCw className="w-3 h-3 animate-spin text-[#5B8266] dark:text-emerald-400" />
+                  <span>Syncing...</span>
+                </div>
+              )}
               {/* Mobile Edit Status Indicator */}
               <button
                 type="button"
@@ -156,8 +174,8 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Sync status & Actions on Desktop */}
-          <div className="hidden md:flex items-center gap-2.5">
+          {/* Sync status & Actions on Desktop (CSS Selector: div#root > div > header > div > div > div:nth-of-type(2)) */}
+          <div className="hidden md:flex items-center gap-2.5 shrink-0" id="header-desktop-actions">
             {/* Visual Edit Protection Indicator: Compact Icon Button */}
             {isUnlocked ? (
               <button
@@ -183,36 +201,89 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {/* Live Save Status */}
+            {/* Live Save Status & Background Database Sync Indicator */}
             <div className="flex items-center">
-              {saveStatus === 'saving' && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#FAF8F5] dark:bg-slate-800 border border-[#E8E2D8] dark:border-slate-700 text-xs text-[#8C7A6B] dark:text-slate-400">
+              {isDatabaseSyncing ? (
+                <div
+                  id="database-syncing-indicator"
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-700/60 text-xs font-semibold text-emerald-800 dark:text-emerald-300 shadow-2xs select-none transition-all duration-300 animate-pulse"
+                  title="Background database synchronization is running quietly. Web view and all features remain completely responsive."
+                >
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span className="tracking-tight">Syncing in background...</span>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                </div>
+              ) : saveStatus === 'saving' ? (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#FAF8F5] dark:bg-slate-800 border border-[#E8E2D8] dark:border-slate-700 text-xs text-[#8C7A6B] dark:text-slate-400 shadow-2xs">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#8C7A6B]" />
                   <span>Saving...</span>
                 </div>
-              )}
-              {saveStatus === 'saved' && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F0F7F2] dark:bg-emerald-950/40 border border-[#D3E8D8] dark:border-emerald-800 text-xs font-medium text-[#40684C] dark:text-emerald-300">
+              ) : saveStatus === 'saved' ? (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F0F7F2] dark:bg-emerald-950/40 border border-[#D3E8D8] dark:border-emerald-800 text-xs font-medium text-[#40684C] dark:text-emerald-300 shadow-2xs">
                   <Check className="w-3.5 h-3.5 text-[#5B8266]" />
-                  <span>{isSupabase ? 'Supabase Synced' : 'Saved'}</span>
+                  <span>{isGoogleSheetsLinked ? 'Sheet Synced ✓' : 'Saved ✓'}</span>
                 </div>
-              )}
-              {saveStatus === 'error' && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#FDF2F0] dark:bg-rose-950/40 border border-[#F5D5D0] dark:border-rose-800 text-xs text-[#C05746] dark:text-rose-300">
+              ) : saveStatus === 'error' ? (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#FDF2F0] dark:bg-rose-950/40 border border-[#F5D5D0] dark:border-rose-800 text-xs text-[#C05746] dark:text-rose-300 shadow-2xs">
                   <AlertCircle className="w-3.5 h-3.5" />
                   <span>Sync Error</span>
                 </div>
-              )}
-              {saveStatus === 'idle' && (
+              ) : (
                 <div
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#FAF8F5] dark:bg-slate-800 border border-[#E8E2D8] dark:border-slate-700 text-xs text-[#7D766C] dark:text-slate-400"
-                  title={isSupabase ? 'Connected to Supabase PostgreSQL Cloud Database (Default)' : 'Local persistence fallback'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#FAF8F5] dark:bg-slate-800 border border-[#E8E2D8] dark:border-slate-700 text-xs text-[#7D766C] dark:text-slate-400 shadow-2xs"
+                  title={isGoogleSheetsLinked ? 'Primary Database: Google Sheet (Two-Way Live Sync Active)' : 'Persistent Local Storage Engine Active'}
                 >
-                  <span className={`w-2 h-2 rounded-full ${isSupabase ? 'bg-[#5B8266] ring-2 ring-[#5B8266]/30' : 'bg-[#A69E92]'}`} />
-                  <span className="font-medium text-[#4A453E] dark:text-slate-300">{isSupabase ? 'Supabase Cloud' : 'Local Persistence'}</span>
+                  <span className={`w-2 h-2 rounded-full ${isGoogleSheetsLinked ? 'bg-emerald-500 ring-2 ring-emerald-500/30' : 'bg-[#5B8266] ring-2 ring-[#5B8266]/30'}`} />
+                  <span className="font-medium text-[#4A453E] dark:text-slate-300">{isGoogleSheetsLinked ? 'Google Sheet' : 'Persistent Storage'}</span>
                 </div>
               )}
             </div>
+
+            {/* Google Sheets Live Database Center Quick Button */}
+            <button
+              type="button"
+              onClick={onOpenGoogleSheets}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-xs font-medium cursor-pointer transition-all active:scale-95 shadow-2xs hover:shadow-xs ${
+                isGoogleSheetsLinked
+                  ? 'bg-emerald-50/70 dark:bg-emerald-950/40 border-emerald-300/80 dark:border-emerald-700/60 text-emerald-800 dark:text-emerald-300'
+                  : 'bg-[#FAF8F5] dark:bg-slate-800 border-[#E8E2D8] dark:border-slate-700 text-[#736A5E] dark:text-slate-300 hover:text-[#2D2A26] dark:hover:text-white'
+              }`}
+              title={
+                isGoogleSheetsLinked
+                  ? 'Google Sheet Database is connected. Click to open live sync center.'
+                  : 'Connect Google Sheet Database for two-way live spreadsheet synchronization.'
+              }
+            >
+              {googleSheetsStatus === 'syncing' ? (
+                <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
+                  <RefreshCw className="w-3 h-3 animate-spin text-emerald-600 dark:text-emerald-400" />
+                  <span className="text-[11px] font-semibold">Reflecting to Sheet...</span>
+                </div>
+              ) : googleSheetsStatus === 'synced' ? (
+                <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                  <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                  <span className="text-[11px] font-semibold">Sheet Synced ✓</span>
+                </div>
+              ) : googleSheetsStatus === 'error' ? (
+                <div className="flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
+                  <AlertCircle className="w-3 h-3 text-rose-500" />
+                  <span className="text-[11px] font-semibold">Sheet Error</span>
+                </div>
+              ) : isGoogleSheetsLinked ? (
+                <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-500/25" />
+                  <span className="text-[11px] font-medium">Sheet Linked</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <Database className="w-3 h-3 text-[#8C8377] dark:text-slate-400" />
+                  <span className="text-[11px]">Google Sheet</span>
+                </div>
+              )}
+            </button>
 
             {/* Theme Toggle Button (Desktop) */}
             {onToggleTheme && (
@@ -281,7 +352,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <div className="mt-2.5 pt-2.5 border-t border-[#F0EBE1] dark:border-slate-800/80 w-full transition-colors duration-300">
               <div
-                className="grid grid-cols-4 lg:grid-cols-8 gap-1.5 sm:gap-2 w-full"
+                className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-1.5 sm:gap-2 w-full"
                 role="tablist"
                 aria-label="Application views"
               >

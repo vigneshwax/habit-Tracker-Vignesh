@@ -97,6 +97,14 @@ export interface DailyJournal {
   content?: string;
   mood?: MoodType;
   energy_level?: number; // 1-5
+  productivity?: number; // 1-5
+  highlights?: string; // Daily highlights / big win
+  gratitude?: string; // 3 things grateful for
+  wins?: string; // Micro-wins & accomplishments
+  challenges?: string; // Challenges & lessons learned
+  priorities?: string; // Tomorrow's top priorities
+  tags?: string[];
+  linked_notes?: string[];
   created_at?: string;
   updated_at?: string;
 }
@@ -161,6 +169,16 @@ export interface AppSettings {
   week_start: 'sunday' | 'monday';
   default_view: ViewTab;
   auto_lock_minutes: number; // 5, 15, 30, 0 (never)
+  google_sheets_script_url?: string;
+  google_sheets_last_synced?: string;
+  google_sheets_auto_push?: boolean;
+  google_sheets_auto_sync?: boolean; // alias for auto_push
+  google_sheets_auto_reflect?: boolean;
+  google_sheets_auto_pull?: boolean; // alias for auto_reflect
+  google_sheets_auto_download_excel?: boolean;
+  google_sheets_auto_download_on_refresh?: boolean; // alias for auto_download_excel
+  google_sheets_last_pushed?: string;
+  google_sheets_last_pulled?: string;
 }
 
 export interface HabitCategoryItem {
@@ -194,7 +212,7 @@ export interface HabitRiskInfo {
 }
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
-export type ViewTab = 'today' | 'goals' | 'grid' | 'calendar' | 'analytics' | 'review' | 'mood' | 'settings';
+export type ViewTab = 'today' | 'journal' | 'goals' | 'grid' | 'calendar' | 'analytics' | 'review' | 'mood' | 'settings' | 'tasks' | 'notes';
 
 export interface UndoAction {
   id: string;
@@ -205,3 +223,179 @@ export interface UndoAction {
   newCompleted: boolean;
   expiresAt: number;
 }
+
+// -----------------------------------------------------------------------------
+// Legacy & Complementary Workspace Interfaces (Tasks, Notes, Sheets)
+// -----------------------------------------------------------------------------
+export type TaskStatus = 'todo' | 'in_progress' | 'completed' | 'blocked' | 'Pending' | 'Completed' | 'In Progress' | 'Deferred' | string;
+export type TaskPriority = 'high' | 'medium' | 'low' | 'High' | 'Medium' | 'Low' | string;
+export type TaskCategory = string;
+export type HRTaskStatus = TaskStatus;
+export type HRTaskPriority = TaskPriority;
+
+export interface HRTask {
+  id: string;
+  title: string;
+  name?: string;
+  description?: string;
+  category?: TaskCategory;
+  priority?: TaskPriority;
+  status: TaskStatus;
+  due_date?: string;
+  date?: string;
+  created_at?: string;
+  updated_at?: string;
+  habit_id?: string;
+  completed?: boolean;
+  [key: string]: any;
+}
+
+export type NoteColor = 'default' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'pink' | 'amber' | 'emerald' | string;
+
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+export type HRChecklistItem = ChecklistItem;
+
+export interface KeepNote {
+  id: string;
+  title: string;
+  content?: string;
+  type?: string;
+  checklist?: ChecklistItem[];
+  color?: NoteColor;
+  pinned?: boolean;
+  archived?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: any;
+}
+
+export interface HRNote {
+  id: string;
+  title: string;
+  content?: string;
+  category?: string;
+  type?: string;
+  checklist?: HRChecklistItem[];
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: any;
+}
+
+export interface ImportPreviewResult {
+  tasks: HRTask[];
+  notes: KeepNote[];
+  skippedCount?: number;
+  [key: string]: any;
+}
+
+export interface GoogleSheetsConfig {
+  spreadsheetId?: string;
+  sheetName?: string;
+  scriptUrl?: string;
+  databaseUrl?: string;
+  sheetUrl?: string;
+  apiKey?: string;
+  lastSynced?: string;
+  lastSyncTime?: string;
+  lastPullTime?: string;
+  autoSync?: boolean;
+  [key: string]: any;
+}
+
+export interface SyncState {
+  status: 'idle' | 'syncing' | 'synced' | 'error';
+  lastSynced?: string;
+  message?: string;
+}
+
+export interface UserPreferences {
+  theme?: 'light' | 'dark' | 'system';
+  autoSync?: boolean;
+  userName?: string;
+  [key: string]: any;
+}
+
+// ==========================================
+// OBSIDIAN SECOND BRAIN & KNOWLEDGE TYPES
+// ==========================================
+
+export type KnowledgeCategory =
+  | 'Daily Journal'
+  | 'Learning'
+  | 'Ideas'
+  | 'Projects'
+  | 'Books'
+  | 'Personal'
+  | 'Career'
+  | 'Goals'
+  | 'Checklists'
+  | 'Meeting Notes'
+  | 'References'
+  | string;
+
+export interface KnowledgeNote {
+  id: string;
+  title: string;
+  content: string;
+  category: KnowledgeCategory;
+  tags: string[];
+  type?: 'note' | 'journal' | 'checklist';
+  pinned?: boolean;
+  favorite?: boolean;
+  archived?: boolean;
+  color?: string;
+  checklist?: ChecklistItem[];
+  created_at: string;
+  updated_at: string;
+  // Dynamic backlinks and outgoing links
+  outgoing_links?: string[]; // Note titles extracted from [[Title]]
+  backlinks?: KnowledgeBacklink[];
+}
+
+export interface KnowledgeBacklink {
+  sourceId: string;
+  sourceTitle: string;
+  sourceCategory: string;
+  snippet?: string;
+}
+
+export interface KnowledgeGraphNode {
+  id: string;
+  title: string;
+  category: string;
+  tags: string[];
+  type: 'note' | 'journal' | 'tag' | 'unresolved' | 'attachment';
+  linkCount: number;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  color?: string;
+  pinned?: boolean;
+  isUnresolved?: boolean;
+  contentSnippet?: string;
+}
+
+export interface KnowledgeGraphEdge {
+  source: string; // node id
+  target: string; // node id
+  sourceTitle: string;
+  targetTitle: string;
+}
+
+export interface KnowledgeTemplate {
+  id: string;
+  title: string;
+  description: string;
+  category: KnowledgeCategory;
+  iconName: string;
+  defaultTags: string[];
+  content: string;
+}
+
+

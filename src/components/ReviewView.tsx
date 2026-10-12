@@ -3,6 +3,7 @@ import { BookOpen, CalendarCheck, Check, RefreshCw, Sparkles, Target, Compass, S
 import { WeeklyReview as WeeklyReviewType, DailyJournal } from '../types';
 import { MONTH_NAMES } from '../utils/date';
 import { WeeklyPlanningCard } from './WeeklyPlanningCard';
+import { HRNotesCard } from './HRNotesCard';
 import { getWeeklyMoodSummary, getMonthlyMoodSummary } from '../utils/mood';
 import { useProtectedAction } from '../context/ProtectedActionContext';
 
@@ -162,7 +163,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             {weeklySaveStatus === 'saved' && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#F0F7F2] dark:bg-emerald-950/40 border border-[#D3E8D8] dark:border-emerald-800 text-xs font-medium text-[#40684C] dark:text-emerald-300">
                 <Check className="w-3.5 h-3.5 text-[#5B8266]" />
-                <span>Saved to Supabase ✓</span>
+                <span>Saved to LocalStorage ✓</span>
               </span>
             )}
             {weeklySaveStatus === 'idle' && (
@@ -397,10 +398,16 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         />
 
         <div className="flex justify-between items-center mt-3 px-1 text-[11px] text-[#8C8377] dark:text-slate-400">
-          <span>Saved permanently in Supabase reflections table</span>
+          <span>Saved permanently in Offline-First LocalStorage</span>
           <span>{monthlyContent.length} characters</span>
         </div>
       </div>
+
+      {/* My Journal & Daily Reflections */}
+      <HRNotesCard
+        title="My Journal & Reflections"
+        subtitle="Review and record personal insights, weekly learnings, and checklists"
+      />
     </div>
   );
 };

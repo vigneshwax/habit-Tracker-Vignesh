@@ -18,6 +18,7 @@ import {
   MoodTrackerEntry,
   MoodTrackerValue,
   MOOD_TRACKER_MAP,
+  KnowledgeNote,
 } from './types';
 
 export class ApiError extends Error {
@@ -30,6 +31,26 @@ export class ApiError extends Error {
 // In-memory + sessionStorage token management for protected actions
 let currentAuthToken: string | null = null;
 let unauthorizedCallback: (() => void) | null = null;
+
+export type MutationListener = (info: { url: string; method?: string }) => void;
+const mutationListeners = new Set<MutationListener>();
+
+export function onDataMutated(listener: MutationListener): () => void {
+  mutationListeners.add(listener);
+  return () => {
+    mutationListeners.delete(listener);
+  };
+}
+
+export function notifyDataMutated(info: { url: string; method?: string }): void {
+  mutationListeners.forEach((listener) => {
+    try {
+      listener(info);
+    } catch (e) {
+      console.warn('Error in mutation listener:', e);
+    }
+  });
+}
 
 export const EDIT_SESSION_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 export const EDIT_PASSWORD = '9500';
@@ -135,7 +156,17 @@ async function request<T>(url: string, options?: RequestInit, retryCount = 0): P
       touchAuthToken();
     }
 
-    return await res.json();
+    const data = await res.json();
+
+    // Notify listeners if a mutation occurred (excluding internal sync calls)
+    if (isMutation && !url.includes('/api/google-sheets') && !url.includes('/api/auth')) {
+      const bodyStr = typeof options?.body === 'string' ? options.body : '';
+      if (!bodyStr.includes('google_sheets_last_synced') && !bodyStr.includes('google_sheets_last_pushed')) {
+        notifyDataMutated({ url, method: options?.method });
+      }
+    }
+
+    return data;
   } catch (err: any) {
     if (err instanceof ApiError) throw err;
 
@@ -154,7 +185,7 @@ async function request<T>(url: string, options?: RequestInit, retryCount = 0): P
 
 export const api = {
   // Status
-  async getStatus(): Promise<{ status: string; dbStatus: string; isSupabase: boolean; message: string }> {
+  async getStatus(): Promise<{ status: string; dbStatus: string; isSupabase?: boolean; primaryDatabase?: string; message: string }> {
     return request('/api/status');
   },
 
@@ -423,13 +454,21 @@ export const api = {
     const defaultDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
     if (typeof dateOrPayload === 'object' && dateOrPayload !== null) {
-      let d = dateOrPayload.date || defaultDate;
+      let d = (dateOrPayload as any).date || defaultDate;
       if (typeof d === 'string' && d.includes('T')) d = d.split('T')[0];
       bodyObj = {
         date: d,
-        content: dateOrPayload.notes !== undefined ? dateOrPayload.notes : dateOrPayload.content,
-        mood: dateOrPayload.mood,
-        energy_level: dateOrPayload.energy_level,
+        content: (dateOrPayload as any).notes !== undefined ? (dateOrPayload as any).notes : (dateOrPayload as any).content,
+        mood: (dateOrPayload as any).mood,
+        energy_level: (dateOrPayload as any).energy_level,
+        productivity: (dateOrPayload as any).productivity,
+        highlights: (dateOrPayload as any).highlights,
+        gratitude: (dateOrPayload as any).gratitude,
+        wins: (dateOrPayload as any).wins,
+        challenges: (dateOrPayload as any).challenges,
+        priorities: (dateOrPayload as any).priorities,
+        tags: (dateOrPayload as any).tags,
+        linked_notes: (dateOrPayload as any).linked_notes,
       };
     } else {
       let d = (typeof dateOrPayload === 'string' && dateOrPayload.trim()) ? dateOrPayload.trim() : defaultDate;
@@ -441,6 +480,61 @@ export const api = {
       body: JSON.stringify(bodyObj),
     });
     return { entry: res.entry, journal: res.entry };
+  },
+
+  async deleteJournal(idOrDate: string): Promise<{ success: boolean }> {
+    return request(`/api/journal/${encodeURIComponent(idOrDate)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Knowledge Management & Obsidian Notes
+  async getNotes(params?: {
+    category?: string;
+    tag?: string;
+    search?: string;
+    archived?: boolean | 'all';
+  }): Promise<{ notes: KnowledgeNote[] }> {
+    const query = new URLSearchParams();
+    if (params?.category) query.set('category', params.category);
+    if (params?.tag) query.set('tag', params.tag);
+    if (params?.search) query.set('search', params.search);
+    if (params?.archived !== undefined) query.set('archived', String(params.archived));
+    const qs = query.toString();
+    return request(`/api/notes${qs ? `?${qs}` : ''}`);
+  },
+
+  async createNote(note: Partial<KnowledgeNote>): Promise<{ note: KnowledgeNote }> {
+    return request('/api/notes', {
+      method: 'POST',
+      body: JSON.stringify(note),
+    });
+  },
+
+  async updateNote(id: string, note: Partial<KnowledgeNote>): Promise<{ note: KnowledgeNote }> {
+    return request(`/api/notes/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(note),
+    });
+  },
+
+  async deleteNote(id: string): Promise<{ success: boolean; message: string }> {
+    return request(`/api/notes/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async duplicateNote(id: string): Promise<{ note: KnowledgeNote }> {
+    return request(`/api/notes/${encodeURIComponent(id)}/duplicate`, {
+      method: 'POST',
+    });
+  },
+
+  async renameNoteCascade(id: string, oldTitle: string, newTitle: string): Promise<{ note: KnowledgeNote; referencesUpdated: number }> {
+    return request('/api/notes/rename', {
+      method: 'PATCH',
+      body: JSON.stringify({ id, oldTitle, newTitle }),
+    });
   },
 
   // Weekly Plans
@@ -624,10 +718,35 @@ export const api = {
   },
 
   // Import full JSON backup
-  async importData(data: any): Promise<{ success: boolean; message: string }> {
+  async importData(data: any): Promise<{ success: boolean; message: string; counts?: any }> {
     return request('/api/import', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   },
+
+  // Google Sheets Apps Script integration
+  async testGoogleSheets(scriptUrl: string): Promise<{ success: boolean; message: string }> {
+    return request('/api/google-sheets/test', {
+      method: 'POST',
+      body: JSON.stringify({ script_url: scriptUrl }),
+    });
+  },
+
+  async syncGoogleSheets(scriptUrl: string, data?: any): Promise<{ success: boolean; message: string; summary?: any; timestamp?: string }> {
+    return request('/api/google-sheets/sync', {
+      method: 'POST',
+      body: JSON.stringify({ script_url: scriptUrl, data }),
+    });
+  },
+
+  async pullGoogleSheets(scriptUrl: string, applyImport: boolean = false): Promise<{ success: boolean; data: any; message?: string }> {
+    return request('/api/google-sheets/pull', {
+      method: 'POST',
+      body: JSON.stringify({ script_url: scriptUrl, apply_import: applyImport }),
+    });
+  },
+
+  onDataMutated,
+  notifyDataMutated,
 };

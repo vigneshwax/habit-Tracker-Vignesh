@@ -138,14 +138,14 @@ export const MoodTrackerSection: React.FC<MoodTrackerSectionProps> = ({
                 Emotional Health OS
               </span>
               <span className="text-xs text-[#8C8377] dark:text-slate-400">
-                public.mood_tracker
+                Offline-First Storage
               </span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-serif font-bold text-[#2D2A26] dark:text-white mt-1">
               Mood Tracker
             </h2>
             <p className="text-xs text-[#7D766C] dark:text-slate-400 mt-1 max-w-xl">
-              Track daily feelings, energy levels, emotional trends, and long-term well-being with Supabase persistence.
+              Track daily feelings, energy levels, emotional trends, and long-term well-being with offline-first persistence.
             </p>
           </div>
 

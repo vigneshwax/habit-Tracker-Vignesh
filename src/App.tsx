@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { api } from './api';
 import {
   Habit,
+  Goal,
   WeeklyReview,
+  WeeklyPlan,
   VisualAffirmation as VisualAffirmationType,
   AppSettings,
   SaveStatus,
@@ -16,6 +18,7 @@ import {
 import { Header } from './components/Header';
 import { TodayFocus } from './components/TodayFocus';
 import { GoalsView } from './components/GoalsView';
+import { JournalView } from './components/JournalView';
 import { SummaryCards } from './components/SummaryCards';
 import { DailyHabitGrid } from './components/DailyHabitGrid';
 import { CalendarMonthView } from './components/CalendarMonthView';
@@ -27,8 +30,13 @@ import { MoodTrackerSection } from './components/mood/MoodTrackerSection';
 import { HabitDetailModal } from './components/HabitDetailModal';
 import { VisualAffirmation } from './components/VisualAffirmation';
 import { AddHabitModal, EditHabitModal, ArchiveHabitModal, DeleteHabitModal } from './components/HabitModals';
+import { ExcelImportModal } from './components/ExcelImportModal';
+import { ExcelExportModal } from './components/ExcelExportModal';
+import { GoogleSheetsSyncModal } from './components/GoogleSheetsSyncModal';
+import { downloadExcelWorkbook, FullExportData, makeUuid } from './utils/excel';
 import { getDaysInMonth, getTodayDateInfo, formatDateKey } from './utils/date';
 import { getHabitOpportunities, calculateConsistencyStreaks } from './utils/scheduler';
+import { CATEGORIES_META } from './utils/categories';
 import { RotateCcw, X, CheckCircle2 } from 'lucide-react';
 import { useProtectedAction } from './context/ProtectedActionContext';
 
@@ -51,12 +59,38 @@ export function App() {
   const [currentYear, setCurrentYear] = useState<number>(today.year);
   const [currentMonth, setCurrentMonth] = useState<number>(today.month); // 1-12
 
-  // Core Data state
-  const [habits, setHabits] = useState<Habit[]>([]);
-  const [entries, setEntries] = useState<Record<string, boolean>>({});
+  // Core Data state with instant initial cache or fallback habits
+  const [habits, setHabits] = useState<Habit[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('vignesh_cached_habits');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return [
+      { id: '47440099-c760-432e-8561-0021fe75518d', name: 'Morning Workout & Stretch', category: 'health', frequency: 'daily', status: 'active', created_at: new Date().toISOString() },
+      { id: '94469549-15f3-47a1-8b34-290befdb18c0', name: 'Deep Work Session (2h)', category: 'career', frequency: 'daily', status: 'active', created_at: new Date().toISOString() },
+      { id: '3cde2ac8-3244-4553-8158-ae49578357c1', name: 'Read 20 Pages', category: 'learning', frequency: 'daily', status: 'active', created_at: new Date().toISOString() },
+      { id: '4fa45b43-fb1e-4123-ac2e-5200a7c768c2', name: 'Meditation & Mindfulness', category: 'personal', frequency: 'daily', status: 'active', created_at: new Date().toISOString() },
+    ];
+  });
+  const [entries, setEntries] = useState<Record<string, boolean>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('vignesh_cached_entries');
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return {};
+  });
   const [journals, setJournals] = useState<DailyJournal[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
   const [reflectionContent, setReflectionContent] = useState<string>('');
   const [weeklyReviews, setWeeklyReviews] = useState<Record<number, WeeklyReview>>({});
+  const [weeklyPlans, setWeeklyPlans] = useState<WeeklyPlan[]>([]);
   const [affirmation, setAffirmation] = useState<VisualAffirmationType>({
     quote: 'Small daily disciplines repeated over time lead to extraordinary transformation.',
     author: 'Robin Sharma',
@@ -65,12 +99,21 @@ export function App() {
   // Settings
   const [settings, setSettings] = useState<AppSettings>(() => {
     const savedTheme = (typeof window !== 'undefined' ? localStorage.getItem('vignesh_theme') : null) as 'light' | 'dark' | 'system' | null;
-    return {
+    let initial: AppSettings = {
       theme: savedTheme || 'light',
       week_start: 'sunday',
       auto_lock_minutes: 15,
       default_view: 'today',
     };
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('vignesh_settings');
+        if (cached) {
+          initial = { ...initial, ...JSON.parse(cached) };
+        }
+      } catch {}
+    }
+    return initial;
   });
 
   // Calendar tab display mode ('habits' | 'mood' | 'both')
@@ -135,16 +178,16 @@ export function App() {
 
   // Sync & Status state
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
-  const [isSupabase, setIsSupabase] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem('vignesh_is_supabase');
-      return cached !== null ? cached === 'true' : true;
-    }
-    return true;
-  });
   const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  const [isDatabaseSyncing, setIsDatabaseSyncing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
-  const [dbStatusMessage, setDbStatusMessage] = useState<string>('Connected to Supabase PostgreSQL cloud database');
+  const [dbStatusMessage, setDbStatusMessage] = useState<string>('Primary Database: Google Sheet (Two-Way Live Database Engine Active)');
+  const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState<boolean>(false);
+  const [isExcelExportModalOpen, setIsExcelExportModalOpen] = useState<boolean>(false);
+  const [excelImportNotice, setExcelImportNotice] = useState<string | null>(null);
+  const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState<boolean>(false);
+  const [googleSheetsNotice, setGoogleSheetsNotice] = useState<string | null>(null);
+  const [googleSheetsSyncStatus, setGoogleSheetsSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
 
   // Auto-dismiss transient error banner after 5 seconds
   useEffect(() => {
@@ -176,11 +219,7 @@ export function App() {
     async function checkStatus() {
       try {
         const status = await api.getStatus();
-        setIsSupabase(status.isSupabase);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('vignesh_is_supabase', String(status.isSupabase));
-        }
-        setDbStatusMessage(status.isSupabase ? 'Connected to Supabase PostgreSQL cloud database' : 'Local fallback persistence active');
+        setDbStatusMessage(status.message || 'Primary Database: Google Sheet (Two-Way Live Database Engine Active)');
       } catch (err) {
         console.warn('Backend status check:', err);
       }
@@ -193,7 +232,7 @@ export function App() {
   // ----------------------------------------------------
   const loadMonthData = useCallback(async () => {
     try {
-      setInitialLoading(true);
+      setIsDatabaseSyncing(true);
       setErrorMessage('');
 
       // Fetch habits, entries, reflection, weekly reviews, affirmation, streak, settings, journals in parallel
@@ -207,6 +246,8 @@ export function App() {
         settingsRes,
         journalsRes,
         moodsRes,
+        goalsRes,
+        plansRes,
       ] = await Promise.allSettled([
         api.getHabits(),
         api.getHabitEntries(currentYear, currentMonth),
@@ -217,15 +258,20 @@ export function App() {
         api.getSettings(),
         api.getJournal({ year: currentYear, month: currentMonth }),
         api.getMoods(),
+        api.getGoals(),
+        api.getWeeklyPlans(currentYear, currentMonth),
       ]);
 
       // 1. Habits
-      if (habitsRes.status === 'fulfilled') {
-        const loadedHabits = habitsRes.value.habits || [];
-        setHabits(loadedHabits);
-
-        // Seed default habits if empty
-        if (loadedHabits.length === 0) {
+      if (habitsRes.status === 'fulfilled' && habitsRes.value) {
+        const loadedHabits = Array.isArray(habitsRes.value.habits) ? habitsRes.value.habits : [];
+        if (loadedHabits.length > 0) {
+          setHabits(loadedHabits);
+          if (typeof window !== 'undefined') {
+            try { localStorage.setItem('vignesh_cached_habits', JSON.stringify(loadedHabits)); } catch {}
+          }
+        } else {
+          // If empty, seed defaults in the background without blocking the UI
           const defaults: Array<{
             name: string;
             category: HabitCategory;
@@ -236,76 +282,92 @@ export function App() {
             { name: 'Deep Work Session (2h)', category: 'career', frequency: 'daily' },
             { name: 'Read 20 Pages', category: 'learning', frequency: 'daily' },
             { name: 'Meditation & Mindfulness', category: 'personal', frequency: 'daily' },
-            { name: 'Review Daily Spending', category: 'finance', frequency: 'specific_days', schedule_days: ['Sun', 'Fri'] },
           ];
-
-          for (const d of defaults) {
-            try {
-              const res = await api.addHabit(d);
-              loadedHabits.push(res.habit);
-            } catch (e) {
-              console.error('Seeding habit failed', e);
+          Promise.allSettled(defaults.map((d) => api.addHabit(d))).then((results) => {
+            const added: Habit[] = [];
+            results.forEach((r) => {
+              if (r.status === 'fulfilled' && r.value?.habit) added.push(r.value.habit);
+            });
+            if (added.length > 0) {
+              setHabits(added);
+              if (typeof window !== 'undefined') {
+                try { localStorage.setItem('vignesh_cached_habits', JSON.stringify(added)); } catch {}
+              }
             }
-          }
-          setHabits([...loadedHabits]);
+          }).catch(() => {});
         }
       }
 
       // 2. Entries
-      if (entriesRes.status === 'fulfilled') {
+      if (entriesRes.status === 'fulfilled' && entriesRes.value && Array.isArray(entriesRes.value.entries)) {
         const entriesMap: Record<string, boolean> = {};
         entriesRes.value.entries.forEach((e) => {
-          if (e.completed) {
+          if (e && e.completed && e.habit_id && e.date) {
             entriesMap[`${e.habit_id}_${e.date}`] = true;
           }
         });
         setEntries(entriesMap);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('vignesh_cached_entries', JSON.stringify(entriesMap)); } catch {}
+        }
       }
 
       // 3. Reflection
-      if (reflectionRes.status === 'fulfilled') {
-        setReflectionContent(reflectionRes.value.reflection?.content || '');
+      if (reflectionRes.status === 'fulfilled' && reflectionRes.value?.reflection) {
+        setReflectionContent(reflectionRes.value.reflection.content || '');
       }
 
       // 4. Weekly Reviews
-      if (reviewsRes.status === 'fulfilled') {
+      if (reviewsRes.status === 'fulfilled' && reviewsRes.value && Array.isArray(reviewsRes.value.reviews)) {
         const map: Record<number, WeeklyReview> = {};
-        (reviewsRes.value.reviews || []).forEach((r) => {
-          map[r.week_number] = r;
+        reviewsRes.value.reviews.forEach((r) => {
+          if (r && r.week_number) {
+            map[r.week_number] = r;
+          }
         });
         setWeeklyReviews(map);
       }
 
       // 5. Affirmation
-      if (affirmationRes.status === 'fulfilled' && affirmationRes.value.affirmation) {
+      if (affirmationRes.status === 'fulfilled' && affirmationRes.value?.affirmation) {
         setAffirmation(affirmationRes.value.affirmation);
       }
 
       // 6. Streak Info
-      if (streakRes.status === 'fulfilled') {
-        setStreakDays(streakRes.value.streak);
-        setBestStreakDays(streakRes.value.bestStreak || streakRes.value.streak);
+      if (streakRes.status === 'fulfilled' && streakRes.value) {
+        setStreakDays(Number(streakRes.value.streak || 0));
+        setBestStreakDays(Number(streakRes.value.bestStreak || streakRes.value.streak || 0));
         setHabitStreaks(streakRes.value.habitStreaks || {});
       }
 
       // 7. Settings
-      if (settingsRes.status === 'fulfilled' && settingsRes.value.settings) {
+      if (settingsRes.status === 'fulfilled' && settingsRes.value?.settings) {
         setSettings((prev) => ({ ...prev, ...settingsRes.value.settings }));
       }
 
       // 8. Daily Journals (Mood & Energy)
-      if (journalsRes.status === 'fulfilled') {
-        setJournals(journalsRes.value.journal || []);
+      if (journalsRes.status === 'fulfilled' && journalsRes.value && Array.isArray(journalsRes.value.journal)) {
+        setJournals(journalsRes.value.journal);
       }
 
       // 9. Mood Tracker Entries
-      if (moodsRes.status === 'fulfilled' && moodsRes.value.moods) {
+      if (moodsRes.status === 'fulfilled' && moodsRes.value && Array.isArray(moodsRes.value.moods)) {
         setCalendarMoodEntries(moodsRes.value.moods);
       }
+
+      // 10. Goals
+      if (goalsRes.status === 'fulfilled' && goalsRes.value && Array.isArray(goalsRes.value.goals)) {
+        setGoals(goalsRes.value.goals);
+      }
+
+      // 11. Weekly Plans
+      if (plansRes.status === 'fulfilled' && plansRes.value && Array.isArray(plansRes.value.plans)) {
+        setWeeklyPlans(plansRes.value.plans);
+      }
     } catch (err: any) {
-      console.error('Error loading month data:', err);
-      setErrorMessage(err?.message || 'Unable to load data. Please refresh.');
+      console.warn('Background database sync completed with local fallback:', err);
     } finally {
+      setIsDatabaseSyncing(false);
       setInitialLoading(false);
     }
   }, [currentYear, currentMonth]);
@@ -392,6 +454,7 @@ export function App() {
           setBestStreakDays(res.bestStreak);
           setHabitStreaks(res.habitStreaks || {});
         });
+        queueAutoPush();
       } catch (err: any) {
         console.error('Failed to toggle habit entry:', err);
         setSaveStatus('error');
@@ -436,6 +499,7 @@ export function App() {
         setHabits((prev) => [...prev, res.habit]);
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000);
+        queueAutoPush();
       } catch (err: any) {
         console.error('Failed to add habit:', err);
         setSaveStatus('error');
@@ -452,6 +516,7 @@ export function App() {
         setHabits((prev) => prev.map((h) => (h.id === habitId ? res.habit : h)));
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000);
+        queueAutoPush();
       } catch (err: any) {
         console.error('Failed to update habit:', err);
         setSaveStatus('error');
@@ -478,6 +543,7 @@ export function App() {
         setHabits((prev) => [...prev, res.habit]);
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000);
+        queueAutoPush();
       } catch (err) {
         setSaveStatus('error');
       }
@@ -498,6 +564,7 @@ export function App() {
         setHabits((prev) => prev.map((h) => (h.id === habitId ? { ...h, ...archivedHabit, status: 'archived' } : h)));
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000);
+        queueAutoPush();
       } catch (err: any) {
         console.error('Failed to archive habit:', err);
         setSaveStatus('error');
@@ -514,6 +581,7 @@ export function App() {
         setHabits((prev) => prev.map((h) => (h.id === habit.id ? res.habit : h)));
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000);
+        queueAutoPush();
       } catch (err: any) {
         console.error('Failed to toggle pause status:', err);
         setSaveStatus('error');
@@ -530,6 +598,7 @@ export function App() {
         setHabits((prev) => prev.map((h) => (h.id === habitId ? res.habit : h)));
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000);
+        queueAutoPush();
       } catch (err: any) {
         console.error('Failed to restore habit:', err);
         setSaveStatus('error');
@@ -546,6 +615,7 @@ export function App() {
         setHabits((prev) => prev.filter((h) => h.id !== habitId));
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000);
+        queueAutoPush();
       } catch (err: any) {
         console.error('Failed to delete habit permanently:', err);
         setSaveStatus('error');
@@ -562,6 +632,7 @@ export function App() {
         try {
           setReflectionContent(content);
           const res = await api.saveReflection(currentYear, currentMonth, content);
+          queueAutoPush();
           resolve(res);
         } catch (e) {
           reject(e);
@@ -591,6 +662,7 @@ export function App() {
         ...prev,
         [reviewData.week_number]: res.review,
       }));
+      queueAutoPush();
     }, `Save Week ${reviewData.week_number} Review`);
   };
 
@@ -598,6 +670,7 @@ export function App() {
     executeProtected(async () => {
       const res = await api.saveAffirmation(newAffirmation);
       setAffirmation(res.affirmation);
+      queueAutoPush();
     }, 'Update Vision Affirmation');
   };
 
@@ -605,14 +678,23 @@ export function App() {
   // Settings Handler
   // ----------------------------------------------------
   const handleUpdateSetting = async <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    // Theme toggling doesn't require PIN (client preference)
-    if (key === 'theme') {
+    // Theme and Google Sheets preference toggles don't require PIN gate
+    if (key === 'theme' || String(key).startsWith('google_sheets_')) {
       const nextSettings = { ...settings, [key]: value };
       setSettings(nextSettings);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('vignesh_settings', JSON.stringify(nextSettings));
+        } catch {}
+      }
       try {
         await api.saveSetting(key, value);
       } catch (err) {
-        console.error('Failed to save theme setting:', err);
+        console.warn(`Failed to save ${String(key)} setting to server:`, err);
+      }
+      // If user toggled settings or linked a new sheet, reflect to sheet if not a timestamp
+      if (key !== 'google_sheets_last_synced' && key !== 'google_sheets_last_pushed' && key !== 'google_sheets_last_pulled') {
+        queueAutoPush();
       }
       return;
     }
@@ -620,8 +702,14 @@ export function App() {
     executeProtected(async () => {
       const nextSettings = { ...settings, [key]: value };
       setSettings(nextSettings);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('vignesh_settings', JSON.stringify(nextSettings));
+        } catch {}
+      }
       try {
         await api.saveSetting(key, value);
+        queueAutoPush();
       } catch (err) {
         console.error('Failed to save setting:', err);
       }
@@ -629,11 +717,24 @@ export function App() {
   };
 
   // ----------------------------------------------------
-  // Export Data Handler (CSV / JSON)
+  // Export Data Handler (CSV / JSON / Excel XLSX)
   // ----------------------------------------------------
-  const handleExportData = async (format: 'json' | 'csv') => {
+  const handleExportData = async (format: 'json' | 'csv' | 'xlsx') => {
     try {
-      if (format === 'csv') {
+      if (format === 'xlsx') {
+        // Fetch full dataset to generate multi-sheet Excel workbook client-side
+        try {
+          const res = await fetch('/api/export?format=json');
+          if (res.ok) {
+            const data = await res.json();
+            downloadExcelWorkbook(data);
+            return;
+          }
+        } catch {
+          // Fallback to server streaming route
+        }
+        window.location.href = '/api/export?format=xlsx';
+      } else if (format === 'csv') {
         window.location.href = '/api/export?format=csv';
       } else {
         const res = await fetch('/api/export?format=json');
@@ -652,6 +753,126 @@ export function App() {
       console.error('Export failed:', err);
     }
   };
+
+  // ----------------------------------------------------
+  // Google Sheets Auto-Download on Refresh / Reload
+  // ----------------------------------------------------
+  useEffect(() => {
+    if (!initialLoading && settings.google_sheets_auto_download_excel && typeof window !== 'undefined') {
+      const todayDate = new Date().toISOString().split('T')[0];
+      const sessionKey = 'vignesh_excel_auto_download_' + todayDate;
+      if (!sessionStorage.getItem(sessionKey)) {
+        sessionStorage.setItem(sessionKey, 'done');
+        handleExportData('xlsx');
+      }
+    }
+  }, [initialLoading, settings.google_sheets_auto_download_excel]);
+
+  // ----------------------------------------------------
+  // Google Sheets Auto-Reflect (Google Sheet -> App)
+  // Reflects changes on tab switch and every 30 seconds
+  // ----------------------------------------------------
+  useEffect(() => {
+    const isAutoReflectActive = settings.google_sheets_auto_reflect !== false && settings.google_sheets_auto_pull !== false;
+    if (!isAutoReflectActive || !settings.google_sheets_script_url) {
+      return;
+    }
+
+    const reflectFromSheet = async () => {
+      try {
+        const pullRes = await api.pullGoogleSheets(settings.google_sheets_script_url!, false);
+        if (pullRes?.data) {
+          if (Array.isArray(pullRes.data.habits) && pullRes.data.habits.length > 0) {
+            setHabits(pullRes.data.habits);
+            try { localStorage.setItem('vignesh_cached_habits', JSON.stringify(pullRes.data.habits)); } catch {}
+          }
+          if (Array.isArray(pullRes.data.goals)) {
+            setGoals(pullRes.data.goals);
+          }
+          if (Array.isArray(pullRes.data.mood_tracker)) {
+            setCalendarMoodEntries(pullRes.data.mood_tracker);
+          }
+          if (Array.isArray(pullRes.data.daily_journal)) {
+            setJournals(pullRes.data.daily_journal);
+          }
+        }
+        loadMonthData();
+      } catch (err) {
+        console.warn('Auto-reflect sync error:', err);
+      }
+    };
+
+    // Periodic check every 30 seconds
+    const intervalId = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        reflectFromSheet();
+      }
+    }, 30000);
+
+    // On browser tab focus / switch
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        reflectFromSheet();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [settings.google_sheets_auto_reflect, settings.google_sheets_script_url, loadMonthData]);
+
+  // ----------------------------------------------------
+  // Google Sheets Auto-Push (App -> Google Sheet)
+  // Debounced push whenever data mutations complete
+  // ----------------------------------------------------
+  const autoPushTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const fullExportDataRef = useRef<FullExportData | null>(null);
+  const queueAutoPush = useCallback(() => {
+    const isAutoPushActive = settings.google_sheets_auto_push !== false && settings.google_sheets_auto_sync !== false;
+    const targetUrl = settings.google_sheets_script_url?.trim();
+    if (!isAutoPushActive || !targetUrl) return;
+
+    setGoogleSheetsSyncStatus('syncing');
+
+    if (autoPushTimerRef.current) clearTimeout(autoPushTimerRef.current);
+    autoPushTimerRef.current = setTimeout(async () => {
+      try {
+        const payload = fullExportDataRef.current || undefined;
+        const res = await api.syncGoogleSheets(targetUrl, payload);
+        if (res.timestamp) {
+          setGoogleSheetsSyncStatus('synced');
+          handleUpdateSetting('google_sheets_last_synced', res.timestamp);
+          handleUpdateSetting('google_sheets_last_pushed', res.timestamp);
+          setTimeout(() => {
+            setGoogleSheetsSyncStatus('idle');
+          }, 3000);
+        } else {
+          setGoogleSheetsSyncStatus('idle');
+        }
+      } catch (err) {
+        console.warn('Auto-push sync warning:', err);
+        setGoogleSheetsSyncStatus('error');
+        setTimeout(() => setGoogleSheetsSyncStatus('idle'), 4000);
+      }
+    }, 1200); // Responsive 1.2s debounce
+  }, [settings.google_sheets_auto_push, settings.google_sheets_auto_sync, settings.google_sheets_script_url]);
+
+  // ----------------------------------------------------
+  // Global Real-Time Reflection Subscription
+  // Automatically triggers Google Sheet auto-push whenever
+  // ANY data changes anywhere in the website (habits, entries,
+  // goals, journal, mood, reviews, plans, affirmations, etc.)
+  // ----------------------------------------------------
+  useEffect(() => {
+    const unsubscribe = api.onDataMutated((info) => {
+      if (info?.url?.includes('google_sheets_last_')) return;
+      queueAutoPush();
+    });
+    return unsubscribe;
+  }, [queueAutoPush]);
 
   // Active vs Archived Habits
   const activeHabits = useMemo(() => habits.filter((h) => (h.status || 'active') === 'active'), [habits]);
@@ -686,6 +907,84 @@ export function App() {
     };
   }, [activeHabits, entries, currentYear, currentMonth, daysInMonth]);
 
+  // Full Relational Dataset for Excel Export & Google Sheets
+  const fullExportData: FullExportData = useMemo(() => {
+    const entriesList = Object.entries(entries).map(([key, completed]) => {
+      const parts = key.split('_');
+      const habitId = parts[0];
+      const dateStr = parts.slice(1).join('_');
+      return {
+        id: makeUuid(),
+        habit_id: habitId,
+        date: dateStr,
+        completed: !!completed,
+        created_at: new Date().toISOString(),
+      };
+    });
+
+    const categoriesList = Object.values(CATEGORIES_META).map((c) => ({
+      id: c.id,
+      name: c.label,
+      icon: c.emoji,
+      created_at: new Date().toISOString(),
+    }));
+
+    const affirmationsList = affirmation && affirmation.quote
+      ? [
+          {
+            id: affirmation.id || makeUuid(),
+            quote: affirmation.quote,
+            author: affirmation.author || '',
+            image_url: affirmation.image_url || '',
+            active: affirmation.active !== false,
+            created_at: affirmation.created_at || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]
+      : [];
+
+    return {
+      app: 'Vignesh Habit Tracker',
+      version: '3.0',
+      exported_at: new Date().toISOString(),
+      habits,
+      habit_entries: entriesList,
+      goals,
+      mood_tracker: calendarMoodEntries,
+      daily_journal: journals,
+      weekly_reviews: Object.values(weeklyReviews),
+      weekly_plans: weeklyPlans,
+      reflections: reflectionContent
+        ? [
+            {
+              id: makeUuid(),
+              month: currentMonth,
+              year: currentYear,
+              content: reflectionContent,
+              created_at: new Date().toISOString(),
+            },
+          ]
+        : [],
+      habit_categories: categoriesList,
+      affirmations: affirmationsList,
+      settings,
+    };
+  }, [
+    habits,
+    entries,
+    goals,
+    calendarMoodEntries,
+    journals,
+    weeklyReviews,
+    weeklyPlans,
+    reflectionContent,
+    currentMonth,
+    currentYear,
+    affirmation,
+    settings,
+  ]);
+  fullExportDataRef.current = fullExportData;
+
   // ----------------------------------------------------
   // Save Mood Handler
   // ----------------------------------------------------
@@ -714,6 +1013,7 @@ export function App() {
       setSaveStatus('saved');
       setErrorMessage('');
       setTimeout(() => setSaveStatus('idle'), 2000);
+      queueAutoPush();
     } catch (err: any) {
       console.error('Failed to save mood entry:', err);
       setSaveStatus('error');
@@ -732,7 +1032,6 @@ export function App() {
         onNextMonth={handleNextMonth}
         onCurrentMonth={handleCurrentMonth}
         saveStatus={saveStatus}
-        isSupabase={isSupabase}
         isUnlocked={isUnlocked}
         onLock={lock}
         onUnlockRequest={() => requestUnlock('Unlock Editing Mode')}
@@ -741,9 +1040,13 @@ export function App() {
         onExport={handleExportData}
         isDarkMode={isDarkMode}
         onToggleTheme={handleToggleTheme}
+        googleSheetsStatus={googleSheetsSyncStatus}
+        isGoogleSheetsLinked={Boolean(settings.google_sheets_script_url?.trim())}
+        onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
+        isDatabaseSyncing={isDatabaseSyncing}
       />
 
-      {/* Main Content Area */}
+      {/* Main Content Area - Renders immediately without blocking the web view */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {/* Error Alert Banner */}
         {errorMessage && (
@@ -759,15 +1062,7 @@ export function App() {
           </div>
         )}
 
-        {/* Loading Spinner */}
-        {initialLoading ? (
-          <div className="py-24 text-center">
-            <div className="inline-block w-8 h-8 border-3 border-[#5B8266] border-t-transparent rounded-full animate-spin mb-3" />
-            <p className="text-xs text-[#7D766C] dark:text-slate-400 font-medium">Syncing with database...</p>
-          </div>
-        ) : (
-          <>
-            {/* 1. TODAY'S FOCUS DASHBOARD TAB */}
+        {/* 1. TODAY'S FOCUS DASHBOARD TAB */}
             {activeTab === 'today' && (
               <div className="animate-in fade-in duration-200 space-y-6">
                 {/* Visual Affirmation Quote Bar */}
@@ -790,6 +1085,7 @@ export function App() {
                   onSelectHabit={(h) => setSelectedHabitForDetail(h)}
                   onSwitchToGrid={() => setActiveTab('grid')}
                   onOpenGoals={() => setActiveTab('goals')}
+                  onOpenJournalTab={() => setActiveTab('journal')}
                   onOpenMoodTab={() => setActiveTab('mood')}
                   onRequireUnlock={() => requestUnlock('Unlock Editing Mode')}
                   onDuplicateHabit={handleDuplicateHabit}
@@ -797,7 +1093,20 @@ export function App() {
               </div>
             )}
 
-            {/* 2. VISION & GOALS TAB */}
+            {/* 2. MY JOURNAL TAB */}
+            {activeTab === 'journal' && (
+              <div className="animate-in fade-in duration-200">
+                <JournalView
+                  habits={habits}
+                  entries={entries}
+                  isUnlocked={isUnlocked}
+                  onRequireUnlock={() => requestUnlock('Unlock Editing Mode')}
+                  onSwitchTab={setActiveTab}
+                />
+              </div>
+            )}
+
+            {/* 3. VISION & GOALS TAB */}
             {activeTab === 'goals' && (
               <div className="animate-in fade-in duration-200">
                 <GoalsView
@@ -994,18 +1303,18 @@ export function App() {
                 <SettingsView
                   settings={settings}
                   archivedHabits={archivedHabits}
-                  isSupabase={isSupabase}
                   dbStatusMessage={dbStatusMessage}
                   onUpdateSetting={handleUpdateSetting}
-                  onRestoreHabit={handleRestoreHabit}
-                  onPermanentlyDeleteHabit={handlePermanentlyDeleteHabit}
+                  onRestoreHabit={(h: any) => handleRestoreHabit(typeof h === 'string' ? h : h?.id)}
+                  onPermanentlyDeleteHabit={(h: any) => handlePermanentlyDeleteHabit(typeof h === 'string' ? h : h?.id)}
                   onExport={handleExportData}
                   onImportSuccess={() => loadMonthData()}
+                  onOpenExcelExport={() => setIsExcelExportModalOpen(true)}
+                  onOpenExcelImport={() => setIsExcelImportModalOpen(true)}
+                  onOpenGoogleSheetsSync={() => setIsGoogleSheetsModalOpen(true)}
                 />
               </div>
             )}
-          </>
-        )}
       </main>
 
       {/* Floating Undo Notification Toast */}
@@ -1034,12 +1343,46 @@ export function App() {
         </div>
       )}
 
+      {/* Floating Excel Import Notice Toast */}
+      {excelImportNotice && (
+        <div className="fixed bottom-6 left-6 z-50 animate-in slide-in-from-bottom-5 duration-200">
+          <div className="bg-emerald-800 text-white px-4 py-3 rounded-2xl shadow-xl border border-emerald-700 flex items-center gap-3 text-xs">
+            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+            <span>{excelImportNotice}</span>
+            <button
+              type="button"
+              onClick={() => setExcelImportNotice(null)}
+              className="text-white/70 hover:text-white p-1 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Google Sheets Notice Toast */}
+      {googleSheetsNotice && (
+        <div className="fixed bottom-6 left-6 z-50 animate-in slide-in-from-bottom-5 duration-200">
+          <div className="bg-emerald-800 text-white px-4 py-3 rounded-2xl shadow-xl border border-emerald-700 flex items-center gap-3 text-xs">
+            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+            <span>{googleSheetsNotice}</span>
+            <button
+              type="button"
+              onClick={() => setGoogleSheetsNotice(null)}
+              className="text-white/70 hover:text-white p-1 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Clean Footer */}
       <footer className="border-t border-[#ECE6DC] dark:border-slate-800 bg-[#FFFFFF] dark:bg-slate-900 py-6 text-center text-xs text-[#8C8377] dark:text-slate-400">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>Vignesh Habit Tracker • Version 3.0 (Personal Growth OS)</span>
           <span className="text-[11px] text-[#A69E92] dark:text-slate-400">
-            {isSupabase ? '☁️ Synced to Supabase PostgreSQL' : '💾 Resilient persistence active'}
+            {settings.google_sheets_script_url ? '📊 Synced to Google Sheet Cloud' : '💾 Persistent Local Storage Active'}
           </span>
         </div>
       </footer>
@@ -1048,14 +1391,14 @@ export function App() {
       <AddHabitModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
-        onAdd={handleAddHabit}
+        onAdd={handleAddHabit as any}
       />
 
       <EditHabitModal
         habit={editingHabit}
         isOpen={!!editingHabit}
         onClose={() => setEditingHabit(null)}
-        onSave={handleEditHabit}
+        onSave={handleEditHabit as any}
         onArchive={(h) => setArchivingHabit(h)}
         onDelete={(h) => setDeletingHabit(h)}
       />
@@ -1106,6 +1449,42 @@ export function App() {
           handleTogglePause(h);
           setSelectedHabitForDetail(null);
         }}
+      />
+
+      {/* Excel Import Modal */}
+      <ExcelImportModal
+        isOpen={isExcelImportModalOpen}
+        onClose={() => setIsExcelImportModalOpen(false)}
+        existingData={{ habits, goals }}
+        onSuccess={(importSummary) => {
+          loadMonthData();
+          setExcelImportNotice(
+            `Successfully imported ${importSummary.validRowsCount} records from Excel spreadsheet!`
+          );
+          setTimeout(() => setExcelImportNotice(null), 6000);
+        }}
+      />
+
+      {/* Excel Export Modal */}
+      <ExcelExportModal
+        isOpen={isExcelExportModalOpen}
+        onClose={() => setIsExcelExportModalOpen(false)}
+        exportData={fullExportData}
+      />
+
+      {/* Google Sheets Sync Modal */}
+      <GoogleSheetsSyncModal
+        isOpen={isGoogleSheetsModalOpen}
+        onClose={() => setIsGoogleSheetsModalOpen(false)}
+        settings={settings}
+        habitsCount={habits.length}
+        entriesCount={Object.keys(entries).length}
+        moodsCount={calendarMoodEntries.length}
+        goalsCount={goals.length}
+        journalsCount={journals.length + (reflectionContent ? 1 : 0)}
+        onUpdateSetting={handleUpdateSetting}
+        onRefreshData={() => loadMonthData()}
+        fullExportData={fullExportData}
       />
     </div>
   );

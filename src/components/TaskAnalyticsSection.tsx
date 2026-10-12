@@ -870,7 +870,7 @@ export const TaskAnalyticsSection: React.FC<TaskAnalyticsSectionProps> = ({
                                   label: cell.dateStr,
                                   sublabel: `${WEEKDAYS[dIdx]}`,
                                   statusText: selectedHabit
-                                    ? !cell.isScheduled
+                                    ? (!cell.isScheduled ? 'Not scheduled' : (cell.isCompleted ? 'Completed' : 'Missed'))
                                     : `${cell.completedCount} / ${cell.scheduledCount} tasks`,
                                   statusColor: cell.isCompleted
                                     ? 'text-emerald-600'

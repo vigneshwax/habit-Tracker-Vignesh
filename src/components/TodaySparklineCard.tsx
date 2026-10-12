@@ -190,7 +190,7 @@ export const TodaySparklineCard: React.FC<TodaySparklineCardProps> = ({
                   return (
                     <text
                       x={x}
-                      y={y + 12}
+                      y={Number(y) + 12}
                       textAnchor="middle"
                       fill={isCurrent ? '#5B8266' : '#8C8377'}
                       className={`text-[11px] ${

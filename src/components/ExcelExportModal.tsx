@@ -47,8 +47,10 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
     habit_entries: true,
     habits: true,
     mood_tracker: true,
+    notes: true,
     reflections: true,
     settings: true,
+    tasks: true,
     weekly_plans: true,
     weekly_reviews: true,
     categories: true,
@@ -67,8 +69,10 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
     'habit_entries',
     'habits',
     'mood_tracker',
+    'notes',
     'reflections',
     'settings',
+    'tasks',
     'weekly_plans',
     'weekly_reviews',
   ];
@@ -90,6 +94,10 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
         return exportData.habits?.length || 0;
       case 'mood_tracker':
         return exportData.mood_tracker?.length || 0;
+      case 'notes':
+        return exportData.notes?.length || 0;
+      case 'tasks':
+        return exportData.tasks?.length || 0;
       case 'reflections':
       case 'monthly_reflections':
         return exportData.reflections?.length || 0;

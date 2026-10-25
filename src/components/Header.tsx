@@ -18,6 +18,7 @@ import {
   Sun,
   Moon,
   Database,
+  CheckSquare,
 } from 'lucide-react';
 import { SaveStatus, ViewTab } from '../types';
 
@@ -50,6 +51,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'today', label: 'Today', icon: Zap },
+  { id: 'tasks', label: 'Tasks', icon: CheckSquare },
   { id: 'journal', label: <><span className="hidden sm:inline lg:hidden xl:inline">My </span>Journal</>, icon: BookMarked },
   { id: 'goals', label: <><span className="hidden sm:inline lg:hidden xl:inline">Vision & </span>Goals</>, icon: Target },
   { id: 'grid', label: <><span className="hidden sm:inline lg:hidden xl:inline">Grid </span>View</>, icon: LayoutGrid },

@@ -136,6 +136,30 @@ export interface LocalDb {
     created_at: string;
     updated_at: string;
   }>;
+  tasks: Array<{
+    id: string;
+    title: string;
+    name?: string;
+    description?: string;
+    category?: string;
+    priority?: string;
+    status: string;
+    due_date?: string;
+    date?: string;
+    time?: string;
+    assigned_to?: string;
+    assignedTo?: string;
+    notes?: string;
+    follow_up_date?: string;
+    followUpDate?: string;
+    completed?: boolean;
+    created_at: string;
+    updated_at: string;
+    createdAt?: string;
+    updatedAt?: string;
+    habit_id?: string;
+    [key: string]: any;
+  }>;
 }
 
 const localDb: LocalDb = {
@@ -357,6 +381,68 @@ Referenced in: [[Personal Goals 2026]] and [[Welcome to Obsidian Second Brain]].
       updated_at: new Date().toISOString(),
     },
   ],
+  tasks: [
+    {
+      id: crypto.randomUUID(),
+      title: 'Morning Workout & Stretch',
+      name: 'Morning Workout & Stretch',
+      category: 'health',
+      priority: 'High',
+      status: 'Pending',
+      date: new Date().toISOString().split('T')[0],
+      time: '07:00',
+      description: '30-45 minutes physical workout, cardio or yoga routine',
+      notes: 'Focus on posture and core strength',
+      completed: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Deep Work Session (2h)',
+      name: 'Deep Work Session (2h)',
+      category: 'career',
+      priority: 'High',
+      status: 'In Progress',
+      date: new Date().toISOString().split('T')[0],
+      time: '09:30',
+      description: 'High-impact engineering, architecture design, and critical priorities',
+      notes: 'Zero notification distraction block',
+      completed: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Read 20 Pages',
+      name: 'Read 20 Pages',
+      category: 'learning',
+      priority: 'Medium',
+      status: 'Pending',
+      date: new Date().toISOString().split('T')[0],
+      time: '21:00',
+      description: 'Non-fiction books on engineering, psychology, or leadership',
+      notes: 'Keep notebook open for highlights',
+      completed: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Evening Journal & Review',
+      name: 'Evening Journal & Review',
+      category: 'personal',
+      priority: 'Medium',
+      status: 'Pending',
+      date: new Date().toISOString().split('T')[0],
+      time: '22:00',
+      description: 'Review day accomplishments, plan next day priorities',
+      notes: 'Reflect on wins and learnings',
+      completed: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+  ],
 };
 
 // Persistent Disk Storage for localDb (Primary backend persistence)
@@ -405,6 +491,7 @@ function loadDbFromFile() {
         if (Array.isArray(parsed.weekly_plans)) localDb.weekly_plans = parsed.weekly_plans;
         if (Array.isArray(parsed.mood_tracker)) localDb.mood_tracker = parsed.mood_tracker;
         if (Array.isArray(parsed.notes) && parsed.notes.length > 0) localDb.notes = parsed.notes;
+        if (Array.isArray(parsed.tasks) && parsed.tasks.length > 0) localDb.tasks = parsed.tasks;
         console.log('[Storage] Persistent database loaded from data/db.json successfully.');
       }
     } else {
@@ -969,7 +1056,12 @@ app.delete('/api/goals/:id', async (req: Request, res: Response) => {
 // DAILY JOURNAL ENDPOINTS
 // ----------------------------------------------------
 app.get('/api/journal', async (req: Request, res: Response) => {
-  const { date, year, month } = req.query;
+  const { id, date, year, month } = req.query;
+
+  if (id && typeof id === 'string') {
+    const entry = localDb.daily_journal.find((j) => j.id === id || j.date === id) || null;
+    return res.json({ journal: entry ? [entry] : [] });
+  }
 
   if (date && typeof date === 'string') {
     const entry = localDb.daily_journal.find((j) => j.date === date) || null;
@@ -984,11 +1076,15 @@ app.get('/api/journal', async (req: Request, res: Response) => {
     return res.json({ journal: entries });
   }
 
-  return res.json({ journal: localDb.daily_journal });
+  // Return all journal entries sorted by date descending
+  const sorted = [...localDb.daily_journal].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return res.json({ journal: sorted });
 });
 
 app.post('/api/journal', async (req: Request, res: Response) => {
   const {
+    id,
+    title,
     date,
     content,
     mood,
@@ -1007,8 +1103,11 @@ app.post('/api/journal', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'date is required' });
   }
 
-  let entry: any = localDb.daily_journal.find((j) => j.date === date);
+  const now = new Date().toISOString();
+  // Find existing by ID or date
+  let entry: any = localDb.daily_journal.find((j) => (id && j.id === id) || j.date === date);
   if (entry) {
+    if (title !== undefined) entry.title = String(title);
     if (content !== undefined) entry.content = String(content);
     if (mood !== undefined) entry.mood = mood;
     if (energy_level !== undefined) entry.energy_level = Number(energy_level);
@@ -1020,10 +1119,11 @@ app.post('/api/journal', async (req: Request, res: Response) => {
     if (priorities !== undefined) entry.priorities = String(priorities);
     if (tags !== undefined) entry.tags = Array.isArray(tags) ? tags : [];
     if (linked_notes !== undefined) entry.linked_notes = Array.isArray(linked_notes) ? linked_notes : [];
-    entry.updated_at = new Date().toISOString();
+    entry.updated_at = now;
   } else {
     entry = {
-      id: crypto.randomUUID(),
+      id: (typeof id === 'string' && id.trim()) ? id.trim() : crypto.randomUUID(),
+      title: title !== undefined ? String(title) : undefined,
       date,
       content: content !== undefined ? String(content) : '',
       mood,
@@ -1036,11 +1136,38 @@ app.post('/api/journal', async (req: Request, res: Response) => {
       priorities: priorities ? String(priorities) : undefined,
       tags: Array.isArray(tags) ? tags : [],
       linked_notes: Array.isArray(linked_notes) ? linked_notes : [],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: now,
+      updated_at: now,
     };
     localDb.daily_journal.push(entry);
   }
+
+  saveDbToFile();
+  return res.json({ entry });
+});
+
+app.put('/api/journal/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const entry: any = localDb.daily_journal.find((j) => j.id === id || j.date === id);
+  if (!entry) {
+    return res.status(404).json({ error: 'Journal entry not found' });
+  }
+
+  const updates = req.body || {};
+  const now = new Date().toISOString();
+  if (updates.title !== undefined) entry.title = String(updates.title);
+  if (updates.content !== undefined) entry.content = String(updates.content);
+  if (updates.mood !== undefined) entry.mood = updates.mood;
+  if (updates.energy_level !== undefined) entry.energy_level = Number(updates.energy_level);
+  if (updates.productivity !== undefined) entry.productivity = Number(updates.productivity);
+  if (updates.highlights !== undefined) entry.highlights = String(updates.highlights);
+  if (updates.gratitude !== undefined) entry.gratitude = String(updates.gratitude);
+  if (updates.wins !== undefined) entry.wins = String(updates.wins);
+  if (updates.challenges !== undefined) entry.challenges = String(updates.challenges);
+  if (updates.priorities !== undefined) entry.priorities = String(updates.priorities);
+  if (updates.tags !== undefined) entry.tags = Array.isArray(updates.tags) ? updates.tags : [];
+  if (updates.linked_notes !== undefined) entry.linked_notes = Array.isArray(updates.linked_notes) ? updates.linked_notes : [];
+  entry.updated_at = now;
 
   saveDbToFile();
   return res.json({ entry });
@@ -1282,6 +1409,241 @@ app.patch('/api/notes/rename', async (req: Request, res: Response) => {
 
   saveDbToFile();
   return res.json({ note: targetNote, referencesUpdated: updatedCount });
+});
+
+// ----------------------------------------------------
+// TASKS ENDPOINTS
+// ----------------------------------------------------
+app.get('/api/tasks', async (req: Request, res: Response) => {
+  const { status, category, priority, date, search, include_archived } = req.query;
+  let tasks = [...(localDb.tasks || [])];
+
+  if (include_archived !== 'true') {
+    tasks = tasks.filter((t) => t.status !== 'archived' && t.status !== 'Archived');
+  }
+
+  if (status && typeof status === 'string' && status !== 'All' && status !== 'all') {
+    tasks = tasks.filter((t) => (t.status || '').toLowerCase() === status.toLowerCase());
+  }
+
+  if (category && typeof category === 'string' && category !== 'All' && category !== 'all') {
+    tasks = tasks.filter((t) => (t.category || '').toLowerCase() === category.toLowerCase());
+  }
+
+  if (priority && typeof priority === 'string' && priority !== 'All' && priority !== 'all') {
+    tasks = tasks.filter((t) => (t.priority || '').toLowerCase() === priority.toLowerCase());
+  }
+
+  if (date && typeof date === 'string') {
+    tasks = tasks.filter((t) => (t.date || '').startsWith(date));
+  }
+
+  if (search && typeof search === 'string') {
+    const q = search.toLowerCase();
+    tasks = tasks.filter(
+      (t) =>
+        (t.title && t.title.toLowerCase().includes(q)) ||
+        (t.name && t.name.toLowerCase().includes(q)) ||
+        (t.description && t.description.toLowerCase().includes(q)) ||
+        (t.notes && t.notes.toLowerCase().includes(q))
+    );
+  }
+
+  // Sort by date desc, then created_at desc
+  tasks.sort((a, b) => {
+    const dateA = a.date || a.created_at || '';
+    const dateB = b.date || b.created_at || '';
+    return dateB.localeCompare(dateA);
+  });
+
+  return res.json({ tasks });
+});
+
+app.post('/api/tasks', async (req: Request, res: Response) => {
+  const {
+    id,
+    title,
+    name,
+    date,
+    time,
+    category,
+    priority,
+    status,
+    assigned_to,
+    assignedTo,
+    description,
+    notes,
+    follow_up_date,
+    followUpDate,
+    habit_id,
+    completed,
+  } = req.body;
+
+  const taskTitle = (title || name || '').trim();
+  if (!taskTitle) {
+    return res.status(400).json({ error: 'Task title is required' });
+  }
+
+  const now = new Date().toISOString();
+  const todayStr = now.split('T')[0];
+  const targetId = (typeof id === 'string' && id.trim()) ? id.trim() : crypto.randomUUID();
+  const taskStatus = status || 'Pending';
+  const isCompleted = completed !== undefined ? Boolean(completed) : (taskStatus.toLowerCase() === 'completed');
+
+  const newTask = {
+    id: targetId,
+    title: taskTitle,
+    name: taskTitle,
+    date: date || todayStr,
+    time: time || '09:00',
+    category: category || 'general',
+    priority: priority || 'Medium',
+    status: isCompleted ? 'Completed' : (taskStatus || 'Pending'),
+    assigned_to: assigned_to || assignedTo || 'Vignesh',
+    assignedTo: assignedTo || assigned_to || 'Vignesh',
+    description: description ? String(description).trim() : '',
+    notes: notes ? String(notes).trim() : '',
+    follow_up_date: follow_up_date || followUpDate || undefined,
+    followUpDate: followUpDate || follow_up_date || undefined,
+    habit_id: habit_id || undefined,
+    completed: isCompleted,
+    created_at: now,
+    updated_at: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const existingIdx = localDb.tasks.findIndex((t) => t.id === targetId);
+  if (existingIdx >= 0) {
+    localDb.tasks[existingIdx] = { ...localDb.tasks[existingIdx], ...newTask };
+  } else {
+    localDb.tasks.unshift(newTask);
+  }
+
+  saveDbToFile();
+  return res.status(201).json({ task: newTask });
+});
+
+app.put('/api/tasks/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const idx = localDb.tasks.findIndex((t) => t.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  const existing = localDb.tasks[idx];
+  const updates = req.body || {};
+  const taskTitle = updates.title !== undefined ? String(updates.title).trim() : (updates.name !== undefined ? String(updates.name).trim() : existing.title);
+  const now = new Date().toISOString();
+
+  let nextStatus = updates.status !== undefined ? updates.status : existing.status;
+  let nextCompleted = updates.completed !== undefined ? Boolean(updates.completed) : existing.completed;
+  if (updates.status !== undefined && updates.completed === undefined) {
+    nextCompleted = String(updates.status).toLowerCase() === 'completed';
+  } else if (updates.completed !== undefined && updates.status === undefined) {
+    nextStatus = nextCompleted ? 'Completed' : (existing.status === 'Completed' ? 'Pending' : existing.status);
+  }
+
+  const updatedTask = {
+    ...existing,
+    ...updates,
+    id: existing.id,
+    title: taskTitle,
+    name: taskTitle,
+    status: nextStatus,
+    completed: nextCompleted,
+    assigned_to: updates.assigned_to || updates.assignedTo || existing.assigned_to,
+    assignedTo: updates.assignedTo || updates.assigned_to || existing.assignedTo,
+    follow_up_date: updates.follow_up_date !== undefined ? updates.follow_up_date : existing.follow_up_date,
+    followUpDate: updates.followUpDate !== undefined ? updates.followUpDate : existing.followUpDate,
+    updated_at: now,
+    updatedAt: now,
+  };
+
+  localDb.tasks[idx] = updatedTask;
+  saveDbToFile();
+  return res.json({ task: updatedTask });
+});
+
+app.delete('/api/tasks/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const initialLen = localDb.tasks.length;
+  localDb.tasks = localDb.tasks.filter((t) => t.id !== id);
+  if (localDb.tasks.length !== initialLen) {
+    saveDbToFile();
+    return res.json({ success: true, id, message: 'Task deleted successfully' });
+  }
+  return res.status(404).json({ error: 'Task not found' });
+});
+
+app.post('/api/tasks/:id/toggle', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const idx = localDb.tasks.findIndex((t) => t.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  const existing = localDb.tasks[idx];
+  const wasCompleted = Boolean(existing.completed) || String(existing.status).toLowerCase() === 'completed';
+  const newStatus = wasCompleted ? 'Pending' : 'Completed';
+  const newCompleted = !wasCompleted;
+  const now = new Date().toISOString();
+
+  const updatedTask = {
+    ...existing,
+    status: newStatus,
+    completed: newCompleted,
+    updated_at: now,
+    updatedAt: now,
+  };
+
+  localDb.tasks[idx] = updatedTask;
+  saveDbToFile();
+  return res.json({ task: updatedTask });
+});
+
+app.post('/api/tasks/batch', async (req: Request, res: Response) => {
+  const { tasks } = req.body;
+  if (!Array.isArray(tasks)) {
+    return res.status(400).json({ error: 'tasks array is required' });
+  }
+
+  const now = new Date().toISOString();
+  tasks.forEach((raw: any) => {
+    if (!raw || (!raw.title && !raw.name)) return;
+    const taskTitle = String(raw.title || raw.name).trim();
+    const targetId = raw.id || crypto.randomUUID();
+    const isCompleted = raw.completed !== undefined ? Boolean(raw.completed) : (String(raw.status || '').toLowerCase() === 'completed');
+    const item = {
+      ...raw,
+      id: targetId,
+      title: taskTitle,
+      name: taskTitle,
+      date: raw.date || now.split('T')[0],
+      time: raw.time || '09:00',
+      category: raw.category || 'general',
+      priority: raw.priority || 'Medium',
+      status: isCompleted ? 'Completed' : (raw.status || 'Pending'),
+      assigned_to: raw.assigned_to || raw.assignedTo || 'Vignesh',
+      assignedTo: raw.assignedTo || raw.assigned_to || 'Vignesh',
+      description: raw.description ? String(raw.description).trim() : '',
+      notes: raw.notes ? String(raw.notes).trim() : '',
+      completed: isCompleted,
+      created_at: raw.created_at || raw.createdAt || now,
+      updated_at: now,
+      createdAt: raw.createdAt || raw.created_at || now,
+      updatedAt: now,
+    };
+    const idx = localDb.tasks.findIndex((t) => t.id === targetId);
+    if (idx >= 0) {
+      localDb.tasks[idx] = { ...localDb.tasks[idx], ...item };
+    } else {
+      localDb.tasks.push(item);
+    }
+  });
+
+  saveDbToFile();
+  return res.json({ success: true, count: localDb.tasks.length, tasks: localDb.tasks });
 });
 
 // ----------------------------------------------------
@@ -1608,6 +1970,7 @@ export function getAllApplicationData() {
     weekly_plans: [...localDb.weekly_plans],
     mood_tracker: [...localDb.mood_tracker],
     notes: [...(localDb.notes || [])],
+    tasks: [...(localDb.tasks || [])],
   };
 }
 
@@ -2091,6 +2454,8 @@ app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
       weekly_plans: localDb.weekly_plans.length,
       reflections: localDb.reflections.length,
       habit_categories: localDb.habit_categories.length,
+      notes: (localDb.notes || []).length,
+      tasks: (localDb.tasks || []).length,
     };
 
     return res.json({
@@ -2239,6 +2604,22 @@ app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
         localDb.habit_categories = cats;
       }
 
+      if (Array.isArray(data.tasks) && data.tasks.length > 0) {
+        data.tasks.forEach((t: any) => {
+          const idx = localDb.tasks.findIndex((item) => item.id === t.id);
+          if (idx >= 0) localDb.tasks[idx] = { ...localDb.tasks[idx], ...t };
+          else localDb.tasks.push(t);
+        });
+      }
+
+      if (Array.isArray(data.notes) && data.notes.length > 0) {
+        data.notes.forEach((n: any) => {
+          const idx = localDb.notes.findIndex((item) => item.id === n.id);
+          if (idx >= 0) localDb.notes[idx] = { ...localDb.notes[idx], ...n };
+          else localDb.notes.push(n);
+        });
+      }
+
       if (settings && typeof settings === 'object') {
         localDb.settings = { ...localDb.settings, ...settings };
       }
@@ -2256,6 +2637,8 @@ app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
         reviews: Array.isArray(weekly_reviews) ? weekly_reviews.length : 0,
         reflections: Array.isArray(refls) ? refls.length : 0,
         categories: Array.isArray(cats) ? cats.length : 0,
+        notes: Array.isArray(data.notes) ? data.notes.length : 0,
+        tasks: Array.isArray(data.tasks) ? data.tasks.length : 0,
       };
     }
 

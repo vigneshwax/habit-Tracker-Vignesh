@@ -212,9 +212,46 @@ A minimalist, high-craft personal Habit Tracker and Life Management System built
      - `DELETE /api/notes/:id`: Permanently removes note with disk sync.
      - `POST /api/notes/:id/duplicate`: Clones note with `(Copy)` suffix.
      - `PATCH /api/notes/rename`: Cascades note title change across all internal `[[wikilinks]]`.
-     - `POST /api/journal`: Saves extended daily journal records (`highlights`, `gratitude`, `wins`, `challenges`, `priorities`, `mood`, `energy_level`, `productivity`, `tags`).
+     - `POST /api/journal`: Saves extended daily journal records (`id`, `title`, `highlights`, `gratitude`, `wins`, `challenges`, `priorities`, `mood`, `energy_level`, `productivity`, `tags`, `linked_notes`).
      - `DELETE /api/journal/:id`: Removes journal entry by ID or date.
      - Integrated with atomic disk persistence (`data/db.json`), Excel export, and offline-first LocalStorage fallback.
+
+---
+
+### 4. Tasks Management & Comprehensive Data Persistence Architecture
+- **Dedicated Top-Level Navigation Tab**: Primary **Tasks** view accessible directly from the header (`activeTab === 'tasks'`).
+- **Triple-View Workflow Engine**:
+  1. **Table View (`src/components/TasksTableView.tsx`)**:
+     - High-density tabular layout with search filter across task titles and descriptions.
+     - Category filters (`Recruitment`, `Payroll`, `Employee Relations`, `Training & Dev`, `Compliance`, `Operations`, `Performance`, `General`).
+     - Priority filtering (`High`, `Medium`, `Low`) and Status filtering (`Pending`, `In Progress`, `Completed`, `Deferred`).
+     - Interactive column sorting by Date, Priority, Status, and Title.
+     - Quick 1-click status toggle, inline edit modal launcher, and delete action guarded by password verification (`9500`).
+  2. **Kanban Board View (`src/components/KanbanBoardView.tsx`)**:
+     - Visual 3-column board: `Pending`, `In Progress`, and `Completed`.
+     - 1-click column transition buttons (`ArrowLeft` / `ArrowRight`) to advance or rewind task status with immediate auto-save.
+     - Priority badges, assignee tags, and due date indicators with past-due color coding.
+  3. **Tasks Calendar View (`src/components/CalendarTasksView.tsx`)**:
+     - Monthly grid mapping tasks to their scheduled dates.
+     - 1-click day selection to filter tasks scheduled for any chosen day.
+     - Quick `+` button on any day cell to create a new task pre-filled with that specific date.
+- **Interactive Task Modal (`src/components/TaskModal.tsx`)**:
+  - Modal designer to create or edit tasks with Title, Date, Time, Category, Priority, Status, Assignee, Description, Notes, and Follow-up Date.
+  - Full preservation of UUIDs, timestamps (`created_at`, `updated_at`), and status flags.
+- **End-to-End Data Persistence Pipeline (Tasks & Journal)**:
+  - **Client-to-Server Real-Time Flow**: UI edits update React state, commit to `localStorageService`, and invoke `api.ts` REST endpoints.
+  - **Atomic Disk Storage**: `server.ts` guarantees writes to `data/db.json` on disk with backup safeguards, preventing data loss on page refresh or browser restart.
+  - **Two-Way Live Cloud Sync**: Tasks and journals are incorporated into the central schema (`src/utils/dataSchema.ts`), Google Sheets auto-push payload (`fullExportData`), and Google Sheets auto-reflect poll.
+  - **Relational Excel Backup**: Multi-sheet export and import (`src/utils/excel.ts`) incorporates complete `tasks` and `daily_journal` sheets with schema validation.
+- **Root Causes Fixed**:
+  - **Tasks Loss on Refresh/Sync**: Resolved missing backend `/api/tasks` endpoints, missing `tasks` collection in `server.ts`, and lack of task sync in `fullExportData`.
+  - **Journal Field Truncation**: Resolved stripping of `id`, `title`, and multiline/Unicode characters in `api.saveJournal` and `POST /api/journal`.
+  - **Entity Boundary Separation**: Enforced distinct schemas and storage keys for Daily Journal (`daily_journal`), Notes/Knowledge Graph (`notes`), Keep Notes, and Monthly Reflections (`reflections`).
+- **Automated Test Suite (`npm test`)**:
+  - `test/tasksAndJournal.test.ts`: 10 automated test cases verifying task creation, editing, completion toggling, deletion, date isolation, journal multiline text, Unicode characters (emojis, Tamil, Japanese, accents), wiki-link extraction, tag parsing, and entity separation.
+  - `test/excel.test.ts`: 10 test cases verifying relational multi-table Excel import/export integrity.
+  - `test/googleSheets.test.ts`: 7 test cases verifying two-way live Google Sheets parity and schema validations.
+  - **Overall Test Results**: 27 tests passing, 0 failing, 0 TypeScript lint errors (`tsc --noEmit`).
 
 ---
 
@@ -837,3 +874,13 @@ The application supports both containerized environments (Node.js standalone / C
 - **Dynamic Serverless Environment Resolution**:
   - The website edit password `9500` is defined directly in application code, removing dependency on environment variables for edit unlocking on Vercel.
   - Standalone `app.listen()` and dev Vite middlewares are automatically skipped in Vercel (`process.env.VERCEL = 1`), preventing port binding conflicts.
+
+---
+
+## 🛠️ AI Studio Build & GitHub Import Migration Verification
+
+The repository was migrated and verified for Google AI Studio Build:
+- **Runtime**: Node.js 22, npm-native execution.
+- **Port & Host**: Express + Vite configured on `http://0.0.0.0:3000`.
+- **Relational Schema Type Parity**: `SupportedTableName` (all 15 canonical tables and aliases including `notes` and `tasks`) verified across `dataSchema.ts`, `excel.ts`, `googleAppsScript.ts`, and `ExcelExportModal.tsx`.
+- **Compilation & Linting**: `tsc --noEmit` and Vite build execute with 0 errors. All 17 automated relational export/sync tests pass.

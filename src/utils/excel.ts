@@ -21,6 +21,7 @@ import {
   ORDERED_TABLE_NAMES,
   SupportedTableName,
   TableDefinition,
+  FullExportData,
 } from './dataSchema';
 
 export {
@@ -29,25 +30,7 @@ export {
   APP_IDENTIFIER,
   ORDERED_TABLE_NAMES,
 };
-export type { SupportedTableName };
-
-export interface FullExportData {
-  habits: Habit[];
-  habit_entries: HabitEntry[];
-  goals: Goal[];
-  mood_tracker: MoodTrackerEntry[];
-  daily_journal: DailyJournal[];
-  weekly_reviews: WeeklyReview[];
-  weekly_plans: WeeklyPlan[];
-  reflections: Reflection[];
-  habit_categories?: HabitCategoryItem[];
-  categories?: HabitCategoryItem[];
-  affirmations?: VisualAffirmation[];
-  settings?: AppSettings | Record<string, any>;
-  exported_at?: string;
-  app?: string;
-  version?: string;
-}
+export type { SupportedTableName, FullExportData };
 
 export interface TableMeta {
   name: SupportedTableName;
@@ -955,8 +938,10 @@ function resolveSheetName(sheetNames: string[], target: SupportedTableName): str
     habit_entries: ['entries', 'checkins', 'habitentry', 'logs', 'completion', 'habitentries'],
     habits: ['habit', 'habitslist', 'allhabits'],
     mood_tracker: ['mood', 'moods', 'moodlog', 'moodhistory'],
+    notes: ['note', 'noteslist', 'knowledge_notes', 'obsidian', 'obsidiannotes'],
     reflections: ['monthly_reflections', 'reflections', 'reflection', 'retrospective'],
     settings: ['setting', 'preferences', 'config'],
+    tasks: ['task', 'taskslist', 'todos', 'todo', 'kanban_tasks'],
     weekly_plans: ['plans', 'weeklyplan', 'plan'],
     weekly_reviews: ['reviews', 'weeklyreview', 'review'],
     categories: ['category', 'habitcategories', 'tags'],

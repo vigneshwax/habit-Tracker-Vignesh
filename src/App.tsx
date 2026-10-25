@@ -14,6 +14,8 @@ import {
   DailyJournal,
   MoodType,
   MoodTrackerEntry,
+  HRTask,
+  TaskStatus,
 } from './types';
 import { Header } from './components/Header';
 import { TodayFocus } from './components/TodayFocus';
@@ -33,6 +35,11 @@ import { AddHabitModal, EditHabitModal, ArchiveHabitModal, DeleteHabitModal } fr
 import { ExcelImportModal } from './components/ExcelImportModal';
 import { ExcelExportModal } from './components/ExcelExportModal';
 import { GoogleSheetsSyncModal } from './components/GoogleSheetsSyncModal';
+import { TasksTableView } from './components/TasksTableView';
+import { KanbanBoardView } from './components/KanbanBoardView';
+import { CalendarTasksView } from './components/CalendarTasksView';
+import { TaskModal } from './components/TaskModal';
+import { localStorageService } from './services/localStorageService';
 import { downloadExcelWorkbook, FullExportData, makeUuid } from './utils/excel';
 import { getDaysInMonth, getTodayDateInfo, formatDateKey } from './utils/date';
 import { getHabitOpportunities, calculateConsistencyStreaks } from './utils/scheduler';
@@ -95,6 +102,13 @@ export function App() {
     quote: 'Small daily disciplines repeated over time lead to extraordinary transformation.',
     author: 'Robin Sharma',
   });
+
+  // Tasks state
+  const [tasks, setTasks] = useState<HRTask[]>(() => localStorageService.getTasks());
+  const [tasksSubView, setTasksSubView] = useState<'table' | 'kanban' | 'calendar'>('table');
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState<boolean>(false);
+  const [taskToEdit, setTaskToEdit] = useState<HRTask | null>(null);
+  const [taskModalInitialDate, setTaskModalInitialDate] = useState<string | undefined>(undefined);
 
   // Settings
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -248,6 +262,7 @@ export function App() {
         moodsRes,
         goalsRes,
         plansRes,
+        tasksRes,
       ] = await Promise.allSettled([
         api.getHabits(),
         api.getHabitEntries(currentYear, currentMonth),
@@ -260,6 +275,7 @@ export function App() {
         api.getMoods(),
         api.getGoals(),
         api.getWeeklyPlans(currentYear, currentMonth),
+        api.getTasks(),
       ]);
 
       // 1. Habits
@@ -363,6 +379,12 @@ export function App() {
       // 11. Weekly Plans
       if (plansRes.status === 'fulfilled' && plansRes.value && Array.isArray(plansRes.value.plans)) {
         setWeeklyPlans(plansRes.value.plans);
+      }
+
+      // 12. Tasks
+      if (tasksRes.status === 'fulfilled' && tasksRes.value && Array.isArray(tasksRes.value.tasks)) {
+        setTasks(tasksRes.value.tasks);
+        localStorageService.saveTasks(tasksRes.value.tasks);
       }
     } catch (err: any) {
       console.warn('Background database sync completed with local fallback:', err);
@@ -624,6 +646,90 @@ export function App() {
   };
 
   // ----------------------------------------------------
+  // Task Handlers (Tasks View)
+  // ----------------------------------------------------
+  const handleOpenNewTaskModal = (date?: string) => {
+    executeProtected(() => {
+      setTaskToEdit(null);
+      setTaskModalInitialDate(date);
+      setIsTaskModalOpen(true);
+    }, 'Add New Task');
+  };
+
+  const handleOpenEditTaskModal = (task: HRTask) => {
+    executeProtected(() => {
+      setTaskToEdit(task);
+      setTaskModalInitialDate(task.date);
+      setIsTaskModalOpen(true);
+    }, `Edit Task "${task.title}"`);
+  };
+
+  const handleSaveTaskModal = async (
+    taskData: Omit<HRTask, 'id' | 'createdAt' | 'updatedAt'>,
+    existingId?: string
+  ) => {
+    try {
+      setSaveStatus('saving');
+      if (existingId) {
+        const updated = localStorageService.updateTask(existingId, taskData);
+        setTasks((prev) => prev.map((t) => (t.id === existingId ? updated : t)));
+      } else {
+        const created = localStorageService.createTask(taskData);
+        setTasks((prev) => [created, ...prev]);
+      }
+      setIsTaskModalOpen(false);
+      setTaskToEdit(null);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+      queueAutoPush();
+    } catch (err) {
+      console.error('Failed to save task:', err);
+      setSaveStatus('error');
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    executeProtected(async () => {
+      try {
+        setSaveStatus('saving');
+        localStorageService.deleteTask(taskId);
+        setTasks((prev) => prev.filter((t) => t.id !== taskId));
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+        queueAutoPush();
+      } catch (err) {
+        console.error('Failed to delete task:', err);
+        setSaveStatus('error');
+      }
+    }, 'Delete Task');
+  };
+
+  const handleToggleTaskStatus = async (taskId: string) => {
+    executeProtected(async () => {
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      const newStatus = task.status === 'Completed' ? 'Pending' : 'Completed';
+      const updated = localStorageService.updateTask(taskId, {
+        status: newStatus,
+        completed: newStatus === 'Completed',
+      });
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
+      queueAutoPush();
+    }, 'Update Task Status');
+  };
+
+  const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
+    executeProtected(async () => {
+      const updated = localStorageService.updateTask(taskId, {
+        status: newStatus,
+        completed: newStatus === 'Completed',
+      });
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
+      queueAutoPush();
+    }, 'Update Task Status');
+  };
+
+  // ----------------------------------------------------
   // Reflection & Review Handlers (Guarded by Protected Action)
   // ----------------------------------------------------
   const handleSaveReflection = async (content: string) => {
@@ -794,6 +900,10 @@ export function App() {
           }
           if (Array.isArray(pullRes.data.daily_journal)) {
             setJournals(pullRes.data.daily_journal);
+          }
+          if (Array.isArray(pullRes.data.tasks)) {
+            setTasks(pullRes.data.tasks);
+            localStorageService.saveTasks(pullRes.data.tasks);
           }
         }
         loadMonthData();
@@ -967,6 +1077,7 @@ export function App() {
         : [],
       habit_categories: categoriesList,
       affirmations: affirmationsList,
+      tasks,
       settings,
     };
   }, [
@@ -981,6 +1092,7 @@ export function App() {
     currentMonth,
     currentYear,
     affirmation,
+    tasks,
     settings,
   ]);
   fullExportDataRef.current = fullExportData;
@@ -1093,12 +1205,97 @@ export function App() {
               </div>
             )}
 
+            {/* TASKS TAB */}
+            {activeTab === 'tasks' && (
+              <div className="animate-in fade-in duration-200 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#ECE6DC] dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <div className="inline-flex items-center p-1 bg-[#F0EBE1] dark:bg-slate-800 rounded-2xl border border-[#ECE6DC] dark:border-slate-700 shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => setTasksSubView('table')}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          tasksSubView === 'table'
+                            ? 'bg-white dark:bg-slate-700 text-[#2D2A26] dark:text-white shadow-2xs'
+                            : 'text-[#7D766C] dark:text-slate-400 hover:text-[#2D2A26] dark:hover:text-white'
+                        }`}
+                      >
+                        Table View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTasksSubView('kanban')}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          tasksSubView === 'kanban'
+                            ? 'bg-white dark:bg-slate-700 text-[#2D2A26] dark:text-white shadow-2xs'
+                            : 'text-[#7D766C] dark:text-slate-400 hover:text-[#2D2A26] dark:hover:text-white'
+                        }`}
+                      >
+                        Kanban Board
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTasksSubView('calendar')}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          tasksSubView === 'calendar'
+                            ? 'bg-white dark:bg-slate-700 text-[#2D2A26] dark:text-white shadow-2xs'
+                            : 'text-[#7D766C] dark:text-slate-400 hover:text-[#2D2A26] dark:hover:text-white'
+                        }`}
+                      >
+                        Tasks Calendar
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenNewTaskModal()}
+                    className="inline-flex items-center gap-2 bg-[#5B8266] hover:bg-[#4A6F54] text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm transition-colors cursor-pointer self-start sm:self-auto"
+                  >
+                    + New Task
+                  </button>
+                </div>
+
+                {tasksSubView === 'table' && (
+                  <TasksTableView
+                    tasks={tasks}
+                    onOpenNewTaskModal={() => handleOpenNewTaskModal()}
+                    onEditTask={handleOpenEditTaskModal}
+                    onDeleteTask={handleDeleteTask}
+                    onToggleStatus={handleToggleTaskStatus}
+                    isUnlocked={isUnlocked}
+                    onRequestUnlock={() => requestUnlock('Unlock Tasks Editing')}
+                  />
+                )}
+
+                {tasksSubView === 'kanban' && (
+                  <KanbanBoardView
+                    tasks={tasks}
+                    onOpenNewTaskModal={() => handleOpenNewTaskModal()}
+                    onEditTask={handleOpenEditTaskModal}
+                    onDeleteTask={handleDeleteTask}
+                    onUpdateStatus={handleUpdateTaskStatus}
+                  />
+                )}
+
+                {tasksSubView === 'calendar' && (
+                  <CalendarTasksView
+                    tasks={tasks}
+                    onOpenNewTaskModal={handleOpenNewTaskModal}
+                    onEditTask={handleOpenEditTaskModal}
+                  />
+                )}
+              </div>
+            )}
+
             {/* 2. MY JOURNAL TAB */}
             {activeTab === 'journal' && (
               <div className="animate-in fade-in duration-200">
                 <JournalView
                   habits={habits}
                   entries={entries}
+                  initialJournals={journals}
+                  onUpdateJournals={setJournals}
                   isUnlocked={isUnlocked}
                   onRequireUnlock={() => requestUnlock('Unlock Editing Mode')}
                   onSwitchTab={setActiveTab}
@@ -1485,6 +1682,18 @@ export function App() {
         onUpdateSetting={handleUpdateSetting}
         onRefreshData={() => loadMonthData()}
         fullExportData={fullExportData}
+      />
+
+      {/* Task Modal */}
+      <TaskModal
+        isOpen={isTaskModalOpen}
+        onClose={() => {
+          setIsTaskModalOpen(false);
+          setTaskToEdit(null);
+        }}
+        onSave={handleSaveTaskModal}
+        taskToEdit={taskToEdit}
+        initialDate={taskModalInitialDate}
       />
     </div>
   );

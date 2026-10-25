@@ -19,6 +19,7 @@ import {
   MoodTrackerValue,
   MOOD_TRACKER_MAP,
   KnowledgeNote,
+  HRTask,
 } from './types';
 
 export class ApiError extends Error {
@@ -457,6 +458,8 @@ export const api = {
       let d = (dateOrPayload as any).date || defaultDate;
       if (typeof d === 'string' && d.includes('T')) d = d.split('T')[0];
       bodyObj = {
+        id: (dateOrPayload as any).id,
+        title: (dateOrPayload as any).title,
         date: d,
         content: (dateOrPayload as any).notes !== undefined ? (dateOrPayload as any).notes : (dateOrPayload as any).content,
         mood: (dateOrPayload as any).mood,
@@ -534,6 +537,59 @@ export const api = {
     return request('/api/notes/rename', {
       method: 'PATCH',
       body: JSON.stringify({ id, oldTitle, newTitle }),
+    });
+  },
+
+  // Tasks Management
+  async getTasks(params?: {
+    status?: string;
+    category?: string;
+    priority?: string;
+    date?: string;
+    search?: string;
+    include_archived?: boolean;
+  }): Promise<{ tasks: HRTask[] }> {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.category) query.set('category', params.category);
+    if (params?.priority) query.set('priority', params.priority);
+    if (params?.date) query.set('date', params.date);
+    if (params?.search) query.set('search', params.search);
+    if (params?.include_archived !== undefined) query.set('include_archived', String(params.include_archived));
+    const qs = query.toString();
+    return request(`/api/tasks${qs ? `?${qs}` : ''}`);
+  },
+
+  async createTask(task: Partial<HRTask>): Promise<{ task: HRTask }> {
+    return request('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify(task),
+    });
+  },
+
+  async updateTask(id: string, updates: Partial<HRTask>): Promise<{ task: HRTask }> {
+    return request(`/api/tasks/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  },
+
+  async deleteTask(id: string): Promise<{ success: boolean; id: string; message: string }> {
+    return request(`/api/tasks/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async toggleTaskStatus(id: string): Promise<{ task: HRTask }> {
+    return request(`/api/tasks/${encodeURIComponent(id)}/toggle`, {
+      method: 'POST',
+    });
+  },
+
+  async saveTasksBatch(tasks: HRTask[]): Promise<{ success: boolean; count: number; tasks: HRTask[] }> {
+    return request('/api/tasks/batch', {
+      method: 'POST',
+      body: JSON.stringify({ tasks }),
     });
   },
 

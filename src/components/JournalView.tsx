@@ -42,6 +42,8 @@ interface JournalViewProps {
   onRequireUnlock?: () => void;
   onSwitchTab?: (tab: ViewTab) => void;
   className?: string;
+  initialJournals?: DailyJournal[];
+  onUpdateJournals?: (journals: DailyJournal[]) => void;
 }
 
 type JournalSubView = 'dashboard' | 'daily' | 'notes' | 'graph';
@@ -53,13 +55,15 @@ export const JournalView: React.FC<JournalViewProps> = ({
   onRequireUnlock,
   onSwitchTab,
   className = '',
+  initialJournals,
+  onUpdateJournals,
 }) => {
   // Navigation inside the Journal page
   const [activeSubView, setActiveSubView] = useState<JournalSubView>('dashboard');
 
   // Core Data Collections
   const [notes, setNotes] = useState<KnowledgeNote[]>([]);
-  const [journals, setJournals] = useState<DailyJournal[]>([]);
+  const [journals, setJournals] = useState<DailyJournal[]>(() => initialJournals || []);
   const [isLoading, setIsLoading] = useState(true);
 
   // Active Note being viewed/edited in NoteEditor (null = explorer view)
@@ -314,21 +318,37 @@ export const JournalView: React.FC<JournalViewProps> = ({
     if (!payload.date) return;
 
     // Optimistically update
+    let optimisticUpdated: DailyJournal[] = [];
     setJournals((prev) => {
-      const idx = prev.findIndex((j) => j.date === payload.date);
+      const idx = prev.findIndex((j) => (payload.id && j.id === payload.id) || j.date === payload.date);
       if (idx >= 0) {
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], ...payload, updated_at: new Date().toISOString() };
-        return updated;
+        optimisticUpdated = [...prev];
+        optimisticUpdated[idx] = { ...optimisticUpdated[idx], ...payload, updated_at: new Date().toISOString() };
+      } else {
+        optimisticUpdated = [{ ...payload, created_at: new Date().toISOString() } as DailyJournal, ...prev];
       }
-      return [...prev, { ...payload, created_at: new Date().toISOString() } as DailyJournal];
+      if (onUpdateJournals) onUpdateJournals(optimisticUpdated);
+      return optimisticUpdated;
     });
 
     try {
-      await api.saveJournal(payload as any);
-      localStorageService.saveJournal(payload as any);
+      const res = await api.saveJournal(payload as any);
+      if (res && res.entry) {
+        setJournals((prev) => {
+          const next = prev.map((j) => (j.date === payload.date || (payload.id && j.id === payload.id) ? res.entry : j));
+          if (!next.some((j) => j.id === res.entry.id || j.date === res.entry.date)) {
+            next.unshift(res.entry);
+          }
+          if (onUpdateJournals) onUpdateJournals(next);
+          return next;
+        });
+        localStorageService.saveJournal(res.entry);
+      } else {
+        localStorageService.saveJournal(payload as any);
+      }
     } catch (err) {
       console.warn('Server journal save notice:', err);
+      localStorageService.saveJournal(payload as any);
     }
   };
 
@@ -338,7 +358,12 @@ export const JournalView: React.FC<JournalViewProps> = ({
       return;
     }
 
-    setJournals((prev) => prev.filter((j) => j.date !== idOrDate && j.id !== idOrDate));
+    setJournals((prev) => {
+      const next = prev.filter((j) => j.date !== idOrDate && j.id !== idOrDate);
+      if (onUpdateJournals) onUpdateJournals(next);
+      return next;
+    });
+
     try {
       await api.deleteJournal(idOrDate);
       showToast('Journal entry deleted');

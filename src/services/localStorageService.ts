@@ -1,4 +1,5 @@
 import { HRTask, HRNote, HRTaskPriority, HRTaskStatus, GoogleSheetsConfig } from '../types';
+import { api } from '../api';
 
 export const STORAGE_KEYS = {
   TASKS: 'hr_daily_tasks_records_v1',
@@ -311,6 +312,11 @@ class LocalStorageService {
     });
     tasks.unshift(newTask);
     this.saveTasks(tasks);
+    try {
+      api.createTask(newTask).catch((e) => console.warn('[localStorageService] async backend createTask notice:', e));
+    } catch {
+      // safe fallback
+    }
     return newTask;
   }
 
@@ -330,6 +336,11 @@ class LocalStorageService {
 
     tasks[idx] = updatedTask;
     this.saveTasks(tasks);
+    try {
+      api.updateTask(id, updatedTask).catch((e) => console.warn('[localStorageService] async backend updateTask notice:', e));
+    } catch {
+      // safe fallback
+    }
     return updatedTask;
   }
 
@@ -349,6 +360,12 @@ class LocalStorageService {
     }
     if (hasChanges) {
       this.setItem(STORAGE_KEYS.ENTRIES, entries);
+    }
+
+    try {
+      api.deleteTask(id).catch((e) => console.warn('[localStorageService] async backend deleteTask notice:', e));
+    } catch {
+      // safe fallback
     }
   }
 
@@ -393,6 +410,20 @@ class LocalStorageService {
     });
     notes.unshift(newNote);
     this.saveNotes(notes);
+    try {
+      api.createNote({
+        id: newNote.id,
+        title: newNote.title,
+        content: newNote.content,
+        category: newNote.category,
+        type: newNote.type as any,
+        pinned: newNote.pinned,
+        color: newNote.color,
+        checklist: newNote.checklistItems,
+      }).catch((e) => console.warn('[localStorageService] async backend createNote notice:', e));
+    } catch {
+      // safe fallback
+    }
     return newNote;
   }
 
@@ -411,6 +442,19 @@ class LocalStorageService {
 
     notes[idx] = updatedNote;
     this.saveNotes(notes);
+    try {
+      api.updateNote(id, {
+        title: updatedNote.title,
+        content: updatedNote.content,
+        category: updatedNote.category,
+        type: updatedNote.type as any,
+        pinned: updatedNote.pinned,
+        color: updatedNote.color,
+        checklist: updatedNote.checklistItems,
+      }).catch((e) => console.warn('[localStorageService] async backend updateNote notice:', e));
+    } catch {
+      // safe fallback
+    }
     return updatedNote;
   }
 
@@ -418,6 +462,11 @@ class LocalStorageService {
     const notes = this.getNotes();
     const filtered = notes.filter((n) => n.id !== id);
     this.saveNotes(filtered);
+    try {
+      api.deleteNote(id).catch((e) => console.warn('[localStorageService] async backend deleteNote notice:', e));
+    } catch {
+      // safe fallback
+    }
   }
 
   // ==========================================

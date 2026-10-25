@@ -33,6 +33,8 @@ export interface FullExportData {
   weekly_reviews: WeeklyReview[];
   weekly_plans: WeeklyPlan[];
   reflections: Reflection[];
+  tasks?: any[];
+  notes?: any[];
   habit_categories?: HabitCategoryItem[];
   categories?: HabitCategoryItem[];
   affirmations?: VisualAffirmation[];
@@ -50,8 +52,10 @@ export type SupportedTableName =
   | 'habit_entries'
   | 'habits'
   | 'mood_tracker'
+  | 'notes'
   | 'reflections'
   | 'settings'
+  | 'tasks'
   | 'weekly_plans'
   | 'weekly_reviews'
   // Aliases for backward compatibility
@@ -105,7 +109,7 @@ export const CENTRAL_DATA_SCHEMA: Record<SupportedTableName, TableDefinition> = 
     displayName: 'Daily Journal',
     primaryKey: 'id',
     foreignKeyDescription: 'none',
-    description: 'Stores daily journal entries, moods, and energy levels',
+    description: 'Stores daily journal entries, reflections, gratitude, and energy levels',
     themeColor: '#0F172A',
     columns: [
       { name: 'id', type: 'string', required: true, isPrimaryKey: true, description: 'Unique journal entry UUID' },
@@ -113,6 +117,14 @@ export const CENTRAL_DATA_SCHEMA: Record<SupportedTableName, TableDefinition> = 
       { name: 'content', type: 'string', required: false, description: 'Journal content text' },
       { name: 'mood', type: 'string', required: false, description: 'Daily mood identifier' },
       { name: 'energy_level', type: 'number', required: false, defaultValue: 3, description: 'Energy level rating (1-5)' },
+      { name: 'productivity', type: 'number', required: false, defaultValue: 3, description: 'Productivity rating (1-5)' },
+      { name: 'highlights', type: 'string', required: false, description: 'Daily highlights and big wins' },
+      { name: 'gratitude', type: 'string', required: false, description: 'Gratitude reflections' },
+      { name: 'wins', type: 'string', required: false, description: 'Accomplishments and wins' },
+      { name: 'challenges', type: 'string', required: false, description: 'Challenges and lessons learned' },
+      { name: 'priorities', type: 'string', required: false, description: 'Next day priorities' },
+      { name: 'tags', type: 'array', required: false, description: 'Tags and hashtags' },
+      { name: 'linked_notes', type: 'array', required: false, description: 'Cross-linked note titles' },
       { name: 'created_at', type: 'date', required: false, description: 'Creation timestamp' },
       { name: 'updated_at', type: 'date', required: false, description: 'Last modified timestamp' },
     ],
@@ -310,6 +322,51 @@ export const CENTRAL_DATA_SCHEMA: Record<SupportedTableName, TableDefinition> = 
       { name: 'updated_at', type: 'date', required: false, description: 'Last modified timestamp' },
     ],
   },
+  tasks: {
+    name: 'tasks',
+    displayName: 'Tasks',
+    primaryKey: 'id',
+    foreignKeyDescription: 'none',
+    description: 'Stores personal tasks, assignments, priorities, and follow-ups',
+    themeColor: '#0F172A',
+    columns: [
+      { name: 'id', type: 'string', required: true, isPrimaryKey: true, description: 'Unique task UUID' },
+      { name: 'date', type: 'date', required: false, description: 'Due date (YYYY-MM-DD)' },
+      { name: 'time', type: 'string', required: false, description: 'Target time (HH:MM)' },
+      { name: 'title', type: 'string', required: true, description: 'Task title or name' },
+      { name: 'description', type: 'string', required: false, description: 'Task description and details' },
+      { name: 'category', type: 'string', required: false, defaultValue: 'general', description: 'Task category' },
+      { name: 'priority', type: 'string', required: false, defaultValue: 'Medium', description: 'Priority level (High, Medium, Low)' },
+      { name: 'status', type: 'string', required: false, defaultValue: 'Pending', description: 'Status (Pending, In Progress, Completed, Deferred)' },
+      { name: 'assigned_to', type: 'string', required: false, defaultValue: 'Vignesh', description: 'Assigned assignee' },
+      { name: 'notes', type: 'string', required: false, description: 'Internal remarks or notes' },
+      { name: 'follow_up_date', type: 'date', required: false, description: 'Follow-up date (YYYY-MM-DD)' },
+      { name: 'created_at', type: 'date', required: false, description: 'Creation timestamp' },
+      { name: 'updated_at', type: 'date', required: false, description: 'Last modified timestamp' },
+    ],
+  },
+  notes: {
+    name: 'notes',
+    displayName: 'Notes & Second Brain',
+    primaryKey: 'id',
+    foreignKeyDescription: 'none',
+    description: 'Stores digital second brain notes, knowledge records, and checklists',
+    themeColor: '#0F172A',
+    columns: [
+      { name: 'id', type: 'string', required: true, isPrimaryKey: true, description: 'Unique note UUID' },
+      { name: 'title', type: 'string', required: true, description: 'Note title' },
+      { name: 'content', type: 'string', required: false, description: 'Note content or markdown text' },
+      { name: 'type', type: 'string', required: false, defaultValue: 'text', description: 'Note type (text, checklist)' },
+      { name: 'category', type: 'string', required: false, defaultValue: 'Daily Journal', description: 'Folder or category' },
+      { name: 'checklist', type: 'string', required: false, description: 'Checklist progress items' },
+      { name: 'tags', type: 'string', required: false, description: 'Tags and hashtags' },
+      { name: 'pinned', type: 'boolean', required: false, defaultValue: false, description: 'Pinned status' },
+      { name: 'favorite', type: 'boolean', required: false, defaultValue: false, description: 'Favorite status' },
+      { name: 'color', type: 'string', required: false, description: 'Accent color' },
+      { name: 'created_at', type: 'date', required: false, description: 'Creation timestamp' },
+      { name: 'updated_at', type: 'date', required: false, description: 'Last modified timestamp' },
+    ],
+  },
 };
 
 export const ORDERED_TABLE_NAMES: SupportedTableName[] = [
@@ -324,6 +381,8 @@ export const ORDERED_TABLE_NAMES: SupportedTableName[] = [
   'settings',
   'weekly_plans',
   'weekly_reviews',
+  'tasks',
+  'notes',
 ];
 
 export interface ValidationIssue {

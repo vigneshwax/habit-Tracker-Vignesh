@@ -26,7 +26,6 @@ import { AppSettings, Habit } from '../types';
 import { useProtectedAction } from '../context/ProtectedActionContext';
 import { api } from '../api';
 import { downloadExcelTemplate } from '../utils/excel';
-import { sanitizeErrorMessage } from '../utils/importEngine';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -123,24 +122,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
-    }
-  };
-
-  const formatTimestamp = (iso?: string) => {
-    if (!iso) return 'Never';
-    try {
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return 'Never';
-      return d.toLocaleString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
-    } catch {
-      return 'Never';
     }
   };
 
@@ -562,166 +543,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <span>{importError || 'Failed to import backup'}</span>
           </div>
         )}
-
-        {/* 5B. Backup & Synchronization Telemetry / Health Audit */}
-        <div className="pt-4 border-t border-[#F0EBE1] dark:border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <RefreshCw className="w-4 h-4 text-[#5B8266] dark:text-emerald-400" />
-              <h4 className="text-xs font-bold uppercase tracking-wider text-[#2D2A26] dark:text-white">
-                Backup & Synchronization Telemetry
-              </h4>
-            </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-              Audit Engine Active
-            </span>
-          </div>
-
-          {/* Timestamps Row - Strictly Separated Push vs Pull */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="p-3.5 rounded-2xl bg-[#FAF8F5] dark:bg-slate-800/70 border border-[#ECE6DC] dark:border-slate-700">
-              <span className="text-[10px] font-bold text-[#7D766C] dark:text-slate-400 uppercase tracking-wider block mb-1">
-                Last Successful Backup
-              </span>
-              <p className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                {formatTimestamp(settings.last_backup_time)}
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-[#FAF8F5] dark:bg-slate-800/70 border border-[#ECE6DC] dark:border-slate-700">
-              <span className="text-[10px] font-bold text-[#7D766C] dark:text-slate-400 uppercase tracking-wider block mb-1">
-                Last Google Sheets Upload (Push)
-              </span>
-              <p className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                {formatTimestamp(settings.google_sheets_last_pushed)}
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-[#FAF8F5] dark:bg-slate-800/70 border border-[#ECE6DC] dark:border-slate-700">
-              <span className="text-[10px] font-bold text-[#7D766C] dark:text-slate-400 uppercase tracking-wider block mb-1">
-                Last Google Sheets Download (Pull)
-              </span>
-              <p className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                {formatTimestamp(settings.google_sheets_last_pulled)}
-              </p>
-            </div>
-          </div>
-
-          {/* Processed Records Breakdown Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            <div className="p-3 rounded-xl bg-white dark:bg-slate-800/90 border border-[#ECE6DC] dark:border-slate-700">
-              <span className="text-[10px] text-[#7D766C] dark:text-slate-400 block font-medium">Tasks</span>
-              <div className="mt-1 flex items-baseline justify-between">
-                <span className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                  {settings.last_backup_stats?.tasks_count ?? settings.last_push_stats?.tasks_count ?? 0}
-                </span>
-                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                  exported
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between mt-1 border-t border-[#ECE6DC]/60 dark:border-slate-700/60 pt-1">
-                <span className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                  {settings.last_restore_stats?.tasks_restored ?? settings.last_pull_stats?.tasks_restored ?? 0}
-                </span>
-                <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
-                  restored
-                </span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-white dark:bg-slate-800/90 border border-[#ECE6DC] dark:border-slate-700">
-              <span className="text-[10px] text-[#7D766C] dark:text-slate-400 block font-medium">Journal Entries</span>
-              <div className="mt-1 flex items-baseline justify-between">
-                <span className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                  {settings.last_backup_stats?.journal_count ?? settings.last_push_stats?.journal_count ?? 0}
-                </span>
-                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                  exported
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between mt-1 border-t border-[#ECE6DC]/60 dark:border-slate-700/60 pt-1">
-                <span className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                  {settings.last_restore_stats?.journal_restored ?? settings.last_pull_stats?.journal_restored ?? 0}
-                </span>
-                <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
-                  restored
-                </span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-white dark:bg-slate-800/90 border border-[#ECE6DC] dark:border-slate-700">
-              <span className="text-[10px] text-[#7D766C] dark:text-slate-400 block font-medium">Notes</span>
-              <div className="mt-1 flex items-baseline justify-between">
-                <span className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                  {settings.last_backup_stats?.notes_count ?? settings.last_push_stats?.notes_count ?? 0}
-                </span>
-                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                  exported
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between mt-1 border-t border-[#ECE6DC]/60 dark:border-slate-700/60 pt-1">
-                <span className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                  {settings.last_restore_stats?.notes_restored ?? settings.last_pull_stats?.notes_restored ?? 0}
-                </span>
-                <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
-                  restored
-                </span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-white dark:bg-slate-800/90 border border-[#ECE6DC] dark:border-slate-700">
-              <span className="text-[10px] text-[#7D766C] dark:text-slate-400 block font-medium">Total / Failed</span>
-              <div className="mt-1 flex items-baseline justify-between">
-                <span className="text-xs font-bold text-[#2D2A26] dark:text-white font-mono">
-                  {settings.last_backup_stats?.total_records ?? settings.last_restore_stats?.total_records ?? settings.last_push_stats?.total_records ?? settings.last_pull_stats?.total_records ?? 0}
-                </span>
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                  total
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between mt-1 border-t border-[#ECE6DC]/60 dark:border-slate-700/60 pt-1">
-                <span className={`text-xs font-bold font-mono ${
-                  (settings.last_backup_stats?.failed_records || settings.last_restore_stats?.failed_records || settings.last_push_stats?.failed_records || settings.last_pull_stats?.failed_records)
-                    ? 'text-rose-600 dark:text-rose-400'
-                    : 'text-emerald-600 dark:text-emerald-400'
-                }`}>
-                  {settings.last_backup_stats?.failed_records ?? settings.last_restore_stats?.failed_records ?? settings.last_push_stats?.failed_records ?? settings.last_pull_stats?.failed_records ?? 0}
-                </span>
-                <span className="text-[10px] font-semibold text-rose-500 dark:text-rose-400">
-                  failed
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Operation Status Messaging */}
-          {(() => {
-            const latestOp =
-              settings.last_restore_stats ||
-              settings.last_pull_stats ||
-              settings.last_push_stats ||
-              settings.last_backup_stats;
-            if (!latestOp) return null;
-
-            const isSuccess = latestOp.success !== false && Number(latestOp.failed_records || 0) === 0;
-            return (
-              <div
-                className={`p-3 rounded-2xl text-xs flex items-center gap-2 border ${
-                  isSuccess
-                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-                    : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
-                }`}
-              >
-                {isSuccess ? (
-                  <Check className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
-                )}
-                <span className="font-medium">{sanitizeErrorMessage(latestOp.message)}</span>
-              </div>
-            );
-          })()}
-        </div>
       </div>
 
       {/* 6. Archived Habits Section */}

@@ -27,7 +27,6 @@ import {
   downloadExcelTemplate,
 } from '../utils/excel';
 import { localStorageService } from '../services/localStorageService';
-import { api } from '../api';
 
 interface ExcelExportModalProps {
   isOpen: boolean;
@@ -199,24 +198,6 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
       });
 
       setExportedFilename(filename);
-
-      // Record verified backup telemetry to backend
-      api.recordBackupStats({
-        format: 'xlsx',
-        tasks_count: activeExportData.tasks?.length || 0,
-        tasks_restored: 0,
-        journal_count: activeExportData.daily_journal?.length || 0,
-        journal_restored: 0,
-        notes_count: activeExportData.notes?.length || 0,
-        notes_restored: 0,
-        total_records: selectedRecordsCount,
-        failed_records: 0,
-        success: true,
-        message: `Exported ${selectedRecordsCount} records to ${filename}`,
-      }).catch((err) => {
-        console.warn('Could not record backup stats:', err);
-      });
-
       setTimeout(() => {
         setIsExporting(false);
       }, 800);

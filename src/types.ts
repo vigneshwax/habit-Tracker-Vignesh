@@ -165,22 +165,6 @@ export interface VisualAffirmation {
   updated_at?: string;
 }
 
-export interface OperationTelemetryStats {
-  timestamp: string;
-  format?: string;
-  mode?: string;
-  tasks_count?: number;
-  tasks_restored?: number;
-  journal_count?: number;
-  journal_restored?: number;
-  notes_count?: number;
-  notes_restored?: number;
-  total_records: number;
-  failed_records: number;
-  success: boolean;
-  message: string;
-}
-
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   week_start: 'sunday' | 'monday';
@@ -196,12 +180,6 @@ export interface AppSettings {
   google_sheets_auto_download_on_refresh?: boolean; // alias for auto_download_excel
   google_sheets_last_pushed?: string;
   google_sheets_last_pulled?: string;
-  last_backup_time?: string;
-  last_restore_time?: string;
-  last_backup_stats?: OperationTelemetryStats;
-  last_restore_stats?: OperationTelemetryStats;
-  last_push_stats?: OperationTelemetryStats;
-  last_pull_stats?: OperationTelemetryStats;
 }
 
 export interface HabitCategoryItem {

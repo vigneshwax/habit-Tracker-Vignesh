@@ -204,33 +204,11 @@ export interface ImportPayload {
   confirm_replace?: boolean;
 }
 
-export interface ProcessedTelemetryStats {
-  tasks_restored: number;
-  journal_restored: number;
-  notes_restored: number;
-  total_records: number;
-  failed_records: number;
-}
-
 export interface ImportResult {
   success: boolean;
   message: string;
   newDb: DatabaseSnapshot;
   counts: Record<string, number>;
-  stats: ProcessedTelemetryStats;
-}
-
-/**
- * Sanitizes error messages to ensure passwords (e.g. 9500), bearer tokens,
- * or sensitive query credentials are never exposed in user-facing feedback.
- */
-export function sanitizeErrorMessage(msg: any): string {
-  if (!msg) return 'An unexpected error occurred';
-  let str = typeof msg === 'string' ? msg : (msg?.message || String(msg));
-  str = str.replace(/9500/g, '****');
-  str = str.replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, 'Bearer [REDACTED]');
-  str = str.replace(/([?&](?:key|token|auth|secret|password)=)[^&]+/gi, '$1[REDACTED]');
-  return str;
 }
 
 /**
@@ -925,17 +903,6 @@ export function processDataImport(
     }
   }
 
-  const tasksRestored = Array.isArray(tasks) && isTableSelected('tasks') ? tasks.length : 0;
-  const journalRestored = Array.isArray(daily_journal) && isTableSelected('daily_journal') ? daily_journal.length : 0;
-  const notesRestored = Array.isArray(notes) && isTableSelected('notes') ? notes.length : 0;
-
-  let totalProcessed = 0;
-  for (const [key, rows] of Object.entries(rawPayloads)) {
-    if (Array.isArray(rows) && isTableSelected(key)) {
-      totalProcessed += rows.length;
-    }
-  }
-
   const counts: Record<string, number> = {
     habits: candidateDb.habits.length,
     habit_entries: candidateDb.habit_entries.length,
@@ -951,19 +918,10 @@ export function processDataImport(
     notes: candidateDb.notes.length,
   };
 
-  const stats: ProcessedTelemetryStats = {
-    tasks_restored: tasksRestored,
-    journal_restored: journalRestored,
-    notes_restored: notesRestored,
-    total_records: totalProcessed,
-    failed_records: 0,
-  };
-
   return {
     success: true,
-    message: `Data successfully imported (${mode} mode): ${totalProcessed} records processed`,
+    message: `Data successfully imported (${mode} mode)`,
     newDb: candidateDb,
     counts,
-    stats,
   };
 }

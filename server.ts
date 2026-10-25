@@ -6,8 +6,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import * as XLSX from 'xlsx';
 import { buildExcelWorkbook } from './src/utils/excel';
-import { processDataImport, sanitizeErrorMessage } from './src/utils/importEngine';
-import type { OperationTelemetryStats } from './src/types';
+import { processDataImport } from './src/utils/importEngine';
 
 dotenv.config();
 
@@ -1984,37 +1983,6 @@ app.get('/api/export', async (req: Request, res: Response) => {
   const format = (req.query.format as string) || 'json';
   const data = getAllApplicationData();
 
-  const totalExportRecords =
-    (data.habits || []).length +
-    (data.habit_entries || []).length +
-    (data.tasks || []).length +
-    (data.daily_journal || []).length +
-    (data.notes || []).length +
-    (data.goals || []).length +
-    (data.reflections || []).length +
-    (data.weekly_reviews || []).length +
-    (data.weekly_plans || []).length +
-    (data.mood_tracker || []).length +
-    (data.affirmations || []).length +
-    (data.categories || []).length;
-
-  const exportTimestamp = new Date().toISOString();
-  localDb.settings.last_backup_time = exportTimestamp;
-  localDb.settings.last_backup_stats = {
-    format,
-    tasks_count: (data.tasks || []).length,
-    tasks_restored: 0,
-    journal_count: (data.daily_journal || []).length,
-    journal_restored: 0,
-    notes_count: (data.notes || []).length,
-    notes_restored: 0,
-    total_records: totalExportRecords,
-    failed_records: 0,
-    success: true,
-    message: `Backup exported successfully (${totalExportRecords} total records)`,
-  };
-  saveDbToFile();
-
   if (format === 'csv') {
     const habitMap = new Map(data.habits.map((h) => [h.id, h.name]));
     let csv = 'Habit ID,Habit Name,Date,Completed,Created At\n';
@@ -2039,34 +2007,6 @@ app.get('/api/export', async (req: Request, res: Response) => {
   return res.json(data);
 });
 
-// POST /api/backup/record-stats - Record verified client-side backup completion
-app.post('/api/backup/record-stats', async (req: Request, res: Response) => {
-  const { stats, timestamp } = req.body || {};
-  const recordTime = timestamp || new Date().toISOString();
-  localDb.settings.last_backup_time = recordTime;
-  if (stats && typeof stats === 'object') {
-    localDb.settings.last_backup_stats = {
-      format: stats.format || 'xlsx',
-      tasks_count: Number(stats.tasks_count || 0),
-      tasks_restored: 0,
-      journal_count: Number(stats.journal_count || 0),
-      journal_restored: 0,
-      notes_count: Number(stats.notes_count || 0),
-      notes_restored: 0,
-      total_records: Number(stats.total_records || 0),
-      failed_records: Number(stats.failed_records || 0),
-      success: stats.success !== false,
-      message: sanitizeErrorMessage(stats.message || 'Backup recorded successfully'),
-    };
-  }
-  saveDbToFile();
-  return res.json({
-    success: true,
-    last_backup_time: localDb.settings.last_backup_time,
-    last_backup_stats: localDb.settings.last_backup_stats,
-  });
-});
-
 // POST /api/import - Transactional & Rollback-capable Import
 app.post('/api/import', async (req: Request, res: Response) => {
   // Snapshot for atomic rollback
@@ -2077,50 +2017,19 @@ app.post('/api/import', async (req: Request, res: Response) => {
 
     // Atomically commit candidate changes to memory and disk
     Object.assign(localDb, result.newDb);
-    const timestamp = new Date().toISOString();
-    localDb.settings.last_restore_time = timestamp;
-    localDb.settings.last_restore_stats = {
-      mode: req.body?.mode || 'merge',
-      tasks_count: (result.newDb.tasks || []).length,
-      tasks_restored: result.stats.tasks_restored,
-      journal_count: (result.newDb.daily_journal || []).length,
-      journal_restored: result.stats.journal_restored,
-      notes_count: (result.newDb.notes || []).length,
-      notes_restored: result.stats.notes_restored,
-      total_records: result.stats.total_records,
-      failed_records: 0,
-      success: true,
-      message: result.message,
-    };
     saveDbToFile();
 
     return res.json({
       success: true,
       message: result.message,
       counts: result.counts,
-      stats: localDb.settings.last_restore_stats,
-      timestamp,
     });
   } catch (err: any) {
-    // Atomic rollback to snapshot - NEVER update last_restore_time on failure
+    // Atomic rollback to snapshot
     Object.assign(localDb, dbSnapshot);
-    const sanitized = sanitizeErrorMessage(err?.message || 'Failed to import data.');
-    localDb.settings.last_restore_stats = {
-      mode: req.body?.mode || 'merge',
-      tasks_count: 0,
-      tasks_restored: 0,
-      journal_count: 0,
-      journal_restored: 0,
-      notes_count: 0,
-      notes_restored: 0,
-      total_records: 0,
-      failed_records: 1,
-      success: false,
-      message: sanitized,
-    };
     saveDbToFile();
-    console.error('Error importing data (rolled back):', sanitized);
-    return res.status(400).json({ error: sanitized, stats: localDb.settings.last_restore_stats });
+    console.error('Error importing data (rolled back):', err);
+    return res.status(400).json({ error: err?.message || 'Failed to import data.' });
   }
 });
 
@@ -2283,21 +2192,7 @@ app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
     });
 
     if (!response.ok) {
-      const sanitized = sanitizeErrorMessage(`Google Apps Script returned HTTP ${response.status}`);
-      localDb.settings.last_push_stats = {
-        tasks_count: (payload.tasks || []).length,
-        tasks_restored: 0,
-        journal_count: (payload.daily_journal || []).length,
-        journal_restored: 0,
-        notes_count: (payload.notes || []).length,
-        notes_restored: 0,
-        total_records: 0,
-        failed_records: 1,
-        success: false,
-        message: sanitized,
-      };
-      saveDbToFile();
-      return res.status(400).json({ success: false, message: sanitized, stats: localDb.settings.last_push_stats });
+      return res.status(400).json({ success: false, message: `Google Apps Script returned HTTP ${response.status}` });
     }
 
     const text = await response.text();
@@ -2308,27 +2203,14 @@ app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
       result = { raw: text };
     }
 
-    if (result && (result.status === 'error' || result.success === false)) {
-      const sanitized = sanitizeErrorMessage(result.message || 'Google Apps Script reported an error');
-      localDb.settings.last_push_stats = {
-        tasks_count: (payload.tasks || []).length,
-        tasks_restored: 0,
-        journal_count: (payload.daily_journal || []).length,
-        journal_restored: 0,
-        notes_count: (payload.notes || []).length,
-        notes_restored: 0,
-        total_records: 0,
-        failed_records: 1,
-        success: false,
-        message: sanitized,
-      };
-      saveDbToFile();
-      return res.status(400).json({ success: false, message: sanitized, stats: localDb.settings.last_push_stats });
+    if (result && result.status === 'error') {
+      return res.status(400).json({ success: false, message: result.message || 'Google Apps Script reported an error' });
     }
 
-    // Only update push timestamp on verified success - keep strictly separate from pull
     const timestamp = new Date().toISOString();
+    localDb.settings.google_sheets_last_synced = timestamp;
     localDb.settings.google_sheets_last_pushed = timestamp;
+    saveDbToFile();
 
     const summaryCounts = {
       affirmations: localDb.affirmations.length,
@@ -2345,60 +2227,17 @@ app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
       tasks: (localDb.tasks || []).length,
     };
 
-    const totalPushedRecords =
-      (payload.habits || []).length +
-      (payload.habit_entries || []).length +
-      (payload.tasks || []).length +
-      (payload.daily_journal || []).length +
-      (payload.notes || []).length +
-      (payload.goals || []).length +
-      (payload.reflections || []).length +
-      (payload.weekly_reviews || []).length +
-      (payload.weekly_plans || []).length +
-      (payload.mood_tracker || []).length +
-      (payload.affirmations || []).length +
-      (payload.categories || []).length;
-
-    localDb.settings.last_push_stats = {
-      tasks_count: (payload.tasks || []).length,
-      tasks_restored: 0,
-      journal_count: (payload.daily_journal || []).length,
-      journal_restored: 0,
-      notes_count: (payload.notes || []).length,
-      notes_restored: 0,
-      total_records: totalPushedRecords,
-      failed_records: 0,
-      success: true,
-      message: sanitizeErrorMessage(result.message || 'Successfully synced data to Google Sheets!'),
-    };
-    saveDbToFile();
-
     return res.json({
       success: true,
       message: result.message || 'Successfully synced data to Google Sheets!',
       timestamp,
       summary: result.counts || summaryCounts,
       counts: summaryCounts,
-      stats: localDb.settings.last_push_stats,
       raw: result,
     });
   } catch (err: any) {
     console.error('Error syncing to Google Apps Script:', err);
-    const sanitized = sanitizeErrorMessage('Failed to sync to Google Sheets: ' + (err?.message || 'Network error'));
-    localDb.settings.last_push_stats = {
-      tasks_count: 0,
-      tasks_restored: 0,
-      journal_count: 0,
-      journal_restored: 0,
-      notes_count: 0,
-      notes_restored: 0,
-      total_records: 0,
-      failed_records: 1,
-      success: false,
-      message: sanitized,
-    };
-    saveDbToFile();
-    return res.status(500).json({ success: false, message: sanitized, stats: localDb.settings.last_push_stats });
+    return res.status(500).json({ success: false, message: 'Failed to sync to Google Sheets: ' + (err?.message || 'Network error') });
   }
 });
 
@@ -2418,21 +2257,7 @@ app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
     });
 
     if (!response.ok) {
-      const sanitized = sanitizeErrorMessage(`Google Apps Script returned HTTP ${response.status}`);
-      localDb.settings.last_pull_stats = {
-        tasks_count: (localDb.tasks || []).length,
-        tasks_restored: 0,
-        journal_count: (localDb.daily_journal || []).length,
-        journal_restored: 0,
-        notes_count: (localDb.notes || []).length,
-        notes_restored: 0,
-        total_records: 0,
-        failed_records: 1,
-        success: false,
-        message: sanitized,
-      };
-      saveDbToFile();
-      return res.status(400).json({ success: false, message: sanitized, stats: localDb.settings.last_pull_stats });
+      return res.status(400).json({ success: false, message: `Google Apps Script returned HTTP ${response.status}` });
     }
 
     const text = await response.text();
@@ -2443,26 +2268,12 @@ app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
       data = { raw: text };
     }
 
-    if (data && (data.status === 'error' || data.success === false)) {
-      const sanitized = sanitizeErrorMessage(data.message || 'Google Apps Script reported an error during pull');
-      localDb.settings.last_pull_stats = {
-        tasks_count: (localDb.tasks || []).length,
-        tasks_restored: 0,
-        journal_count: (localDb.daily_journal || []).length,
-        journal_restored: 0,
-        notes_count: (localDb.notes || []).length,
-        notes_restored: 0,
-        total_records: 0,
-        failed_records: 1,
-        success: false,
-        message: sanitized,
-      };
-      saveDbToFile();
-      return res.status(400).json({ success: false, message: sanitized, stats: localDb.settings.last_pull_stats });
+    if (data && data.status === 'error') {
+      return res.status(400).json({ success: false, message: data.message || 'Google Apps Script reported an error during pull' });
     }
 
-    // Only update pull timestamp on verified successful retrieval - keep strictly separate from push
     const timestamp = new Date().toISOString();
+    localDb.settings.google_sheets_last_synced = timestamp;
     localDb.settings.google_sheets_last_pulled = timestamp;
 
     let importedCounts: any = {};
@@ -2604,46 +2415,16 @@ app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
       };
     }
 
-    const totalPulledRecords = Object.values(importedCounts).reduce((acc: number, c: any) => acc + (typeof c === 'number' ? c : 0), 0);
-    localDb.settings.last_pull_stats = {
-      tasks_count: (localDb.tasks || []).length,
-      tasks_restored: importedCounts.tasks || 0,
-      journal_count: (localDb.daily_journal || []).length,
-      journal_restored: importedCounts.journal || 0,
-      notes_count: (localDb.notes || []).length,
-      notes_restored: importedCounts.notes || 0,
-      total_records: totalPulledRecords,
-      failed_records: 0,
-      success: true,
-      message: `Successfully loaded data from Google Sheets (${importedCounts.habits || 0} habits, ${importedCounts.tasks || 0} tasks, ${importedCounts.journal || 0} journal entries, ${importedCounts.notes || 0} notes)`,
-    };
-    saveDbToFile();
-
     return res.json({
       success: true,
       data,
       timestamp,
       counts: importedCounts,
-      stats: localDb.settings.last_pull_stats,
-      message: localDb.settings.last_pull_stats.message,
+      message: `Successfully loaded data from Google Sheets (${importedCounts.habits || 0} habits, ${importedCounts.entries || 0} check-ins, ${importedCounts.moods || 0} mood logs)`,
     });
   } catch (err: any) {
     console.error('Error pulling from Google Apps Script:', err);
-    const sanitized = sanitizeErrorMessage('Failed to pull from Google Sheets: ' + (err?.message || 'Network error'));
-    localDb.settings.last_pull_stats = {
-      tasks_count: 0,
-      tasks_restored: 0,
-      journal_count: 0,
-      journal_restored: 0,
-      notes_count: 0,
-      notes_restored: 0,
-      total_records: 0,
-      failed_records: 1,
-      success: false,
-      message: sanitized,
-    };
-    saveDbToFile();
-    return res.status(500).json({ success: false, message: sanitized, stats: localDb.settings.last_pull_stats });
+    return res.status(500).json({ success: false, message: 'Failed to pull from Google Sheets: ' + (err?.message || 'Network error') });
   }
 });
 

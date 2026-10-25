@@ -20,7 +20,6 @@ import {
   MOOD_TRACKER_MAP,
   KnowledgeNote,
   HRTask,
-  OperationTelemetryStats,
 } from './types';
 
 export class ApiError extends Error {
@@ -775,18 +774,10 @@ export const api = {
   },
 
   // Import full JSON backup
-  async importData(data: any): Promise<{ success: boolean; message: string; counts?: any; stats?: OperationTelemetryStats; timestamp?: string }> {
+  async importData(data: any): Promise<{ success: boolean; message: string; counts?: any }> {
     return request('/api/import', {
       method: 'POST',
       body: JSON.stringify(data),
-    });
-  },
-
-  // Record verified backup stats
-  async recordBackupStats(stats: Partial<OperationTelemetryStats>): Promise<{ success: boolean; last_backup_time: string; last_backup_stats: OperationTelemetryStats }> {
-    return request('/api/backup/record-stats', {
-      method: 'POST',
-      body: JSON.stringify({ stats }),
     });
   },
 
@@ -798,14 +789,14 @@ export const api = {
     });
   },
 
-  async syncGoogleSheets(scriptUrl: string, data?: any): Promise<{ success: boolean; message: string; summary?: any; timestamp?: string; stats?: OperationTelemetryStats }> {
+  async syncGoogleSheets(scriptUrl: string, data?: any): Promise<{ success: boolean; message: string; summary?: any; timestamp?: string }> {
     return request('/api/google-sheets/sync', {
       method: 'POST',
       body: JSON.stringify({ script_url: scriptUrl, data }),
     });
   },
 
-  async pullGoogleSheets(scriptUrl: string, applyImport: boolean = false): Promise<{ success: boolean; data: any; message?: string; counts?: any; stats?: OperationTelemetryStats; timestamp?: string }> {
+  async pullGoogleSheets(scriptUrl: string, applyImport: boolean = false): Promise<{ success: boolean; data: any; message?: string }> {
     return request('/api/google-sheets/pull', {
       method: 'POST',
       body: JSON.stringify({ script_url: scriptUrl, apply_import: applyImport }),

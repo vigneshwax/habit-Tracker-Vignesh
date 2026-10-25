@@ -47,7 +47,6 @@ import { api, EDIT_PASSWORD } from '../api';
 import { useProtectedAction } from '../context/ProtectedActionContext';
 import { downloadExcelWorkbook } from '../utils/excel';
 import { AppSettings } from '../types';
-import { sanitizeErrorMessage } from '../utils/importEngine';
 
 interface GoogleSheetsSyncModalProps {
   isOpen: boolean;
@@ -216,18 +215,16 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         const res = await api.syncGoogleSheets(trimmed, fullExportData);
         setPushStatus('success');
         setPushMessage(
-          sanitizeErrorMessage(res.message || 'Successfully saved records into your Google Sheet relational database!')
+          res.message || 'Successfully saved records into your Google Sheet relational database!'
         );
         onUpdateSetting('google_sheets_script_url', trimmed);
         const nowIso = new Date().toISOString();
+        onUpdateSetting('google_sheets_last_synced', res.timestamp || nowIso);
         onUpdateSetting('google_sheets_last_pushed', res.timestamp || nowIso);
-        if (res.stats) {
-          onUpdateSetting('last_push_stats', res.stats);
-        }
       } catch (err: any) {
         setPushStatus('error');
         setPushMessage(
-          sanitizeErrorMessage(err?.message || 'Push failed. Ensure Web App is deployed with "Anyone" access.')
+          err?.message || 'Push failed. Ensure Web App is deployed with "Anyone" access.'
         );
       } finally {
         setIsPushing(false);
@@ -299,26 +296,17 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
       try {
         const pullRes = await api.pullGoogleSheets(trimmed);
         if (pullRes?.data) {
-          const importRes = await api.importData({
+          await api.importData({
             ...pullRes.data,
             mode: 'merge',
           });
           onRefreshData();
           setPullStatus('success');
-          setPullMessage(
-            sanitizeErrorMessage(pullRes.message || importRes?.message || 'Successfully pulled and updated current website data from Google Sheets!')
-          );
-          const nowIso = new Date().toISOString();
-          onUpdateSetting('google_sheets_last_pulled', pullRes.timestamp || nowIso);
-          if (importRes?.stats) {
-            onUpdateSetting('last_pull_stats', importRes.stats);
-          }
+          setPullMessage(pullRes.message || 'Successfully pulled and updated current website data from Google Sheets!');
         }
       } catch (err: any) {
         setPullStatus('error');
-        setPullMessage(
-          sanitizeErrorMessage(err?.message || 'Direct pull failed. Ensure Web App is deployed as Anyone.')
-        );
+        setPullMessage(err?.message || 'Direct pull failed. Ensure Web App is deployed as Anyone.');
       } finally {
         setIsPulling(false);
       }
@@ -337,7 +325,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         setPasswordError('');
         await runDirectPull();
       } catch (e: any) {
-        setPasswordError(sanitizeErrorMessage(e?.message || 'Verification failed'));
+        setPasswordError(e?.message || 'Verification failed');
       }
     }
   };
@@ -381,14 +369,12 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         const res = await api.importData(payloadToImport);
 
         const nowIso = new Date().toISOString();
+        onUpdateSetting('google_sheets_last_synced', nowIso);
         onUpdateSetting('google_sheets_last_pulled', nowIso);
-        if (res?.stats) {
-          onUpdateSetting('last_pull_stats', res.stats);
-        }
-        setApplyReceipt(sanitizeErrorMessage(res.message || 'Data successfully imported from Google Sheet!'));
+        setApplyReceipt(res.message || 'Data successfully imported from Google Sheet!');
         onRefreshData();
       } catch (err: any) {
-        setPasswordError(sanitizeErrorMessage(err?.message || 'Failed to apply import.'));
+        setPasswordError(err?.message || 'Failed to apply import.');
       } finally {
         setIsApplyingImport(false);
       }
@@ -709,19 +695,8 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                   </span>
                 </div>
                 <div className="text-[#8C8377] dark:text-slate-400 font-mono text-[10px]">
-                  Last Upload: {formatDateTime(settings?.google_sheets_last_pushed)} · Last Download: {formatDateTime(settings?.google_sheets_last_pulled)}
+                  Push: {formatDateTime(settings?.google_sheets_last_pushed || settings?.google_sheets_last_synced)} · Pull: {formatDateTime(settings?.google_sheets_last_pulled || settings?.google_sheets_last_synced)}
                 </div>
-                {(settings?.last_push_stats || settings?.last_pull_stats) && (
-                  <div className="text-[10px] text-[#7D766C] dark:text-slate-400 flex flex-wrap gap-x-3 gap-y-1 pt-1 border-t border-[#ECE6DC]/60 dark:border-slate-800">
-                    <span>Tasks: {settings?.last_push_stats?.tasks_count ?? 0} pushed / {settings?.last_pull_stats?.tasks_restored ?? 0} restored</span>
-                    <span>Journal: {settings?.last_push_stats?.journal_count ?? 0} pushed / {settings?.last_pull_stats?.journal_restored ?? 0} restored</span>
-                    <span>Notes: {settings?.last_push_stats?.notes_count ?? 0} pushed / {settings?.last_pull_stats?.notes_restored ?? 0} restored</span>
-                    <span>Total: {settings?.last_push_stats?.total_records ?? settings?.last_pull_stats?.total_records ?? 0}</span>
-                    <span className={Number(settings?.last_push_stats?.failed_records || settings?.last_pull_stats?.failed_records || 0) > 0 ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold'}>
-                      Failed: {settings?.last_push_stats?.failed_records ?? settings?.last_pull_stats?.failed_records ?? 0}
-                    </span>
-                  </div>
-                )}
               </div>
 
               {/* Auto Sync Toggle Cards */}

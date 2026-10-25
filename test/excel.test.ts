@@ -371,6 +371,405 @@ async function runTests() {
     assert(isValidIsoDate('not-a-date') === false, 'Invalid string check');
   });
 
+  // Test 11: Tasks with different statuses, due dates, and optional/empty fields
+  await test('11. Tasks with multiple statuses, due dates, and empty/optional fields round-trip cleanly', async () => {
+    const task1Id = 't1111111-1111-1111-1111-111111111111';
+    const task2Id = 't2222222-2222-2222-2222-222222222222';
+    const task3Id = 't3333333-3333-3333-3333-333333333333';
+    const task4Id = 't4444444-4444-4444-4444-444444444444';
+
+    const testTasksData: FullExportData = {
+      ...baseData,
+      tasks: [
+        {
+          id: task1Id,
+          title: 'Deploy Production Migration',
+          status: 'Completed',
+          completed: true,
+          priority: 'High',
+          category: 'engineering',
+          date: '2026-10-15',
+          due_date: '2026-10-15',
+          time: '14:00',
+          description: 'Migrate PostgreSQL schemas and indexes with zero downtime',
+          assigned_to: 'Vignesh',
+          notes: 'Pre-flight checks passed successfully',
+          follow_up_date: '2026-10-16',
+          created_at: '2026-10-09T08:00:00.000Z',
+        },
+        {
+          id: task2Id,
+          title: 'Quarterly Executive Review',
+          status: 'In Progress',
+          completed: false,
+          priority: 'Medium',
+          category: 'strategy',
+          date: '2026-10-20',
+          due_date: '2026-10-20',
+          time: '10:00',
+          description: 'Prepare visual decks and habit metrics report',
+          assigned_to: 'Vignesh',
+          notes: 'Review draft with team',
+          created_at: '2026-10-09T09:00:00.000Z',
+        },
+        {
+          id: task3Id,
+          title: 'Archive Legacy Backups',
+          status: 'Pending',
+          completed: false,
+          priority: 'Low',
+          category: 'maintenance',
+          date: '2026-10-25',
+          due_date: '2026-10-25',
+          time: '18:00',
+          // Optional fields empty / undefined
+          description: undefined,
+          notes: '',
+          follow_up_date: undefined,
+          created_at: '2026-10-09T10:00:00.000Z',
+        },
+        {
+          id: task4Id,
+          title: 'Deferred Security Audit',
+          status: 'Deferred',
+          completed: false,
+          priority: 'High',
+          category: 'compliance',
+          // date omitted to test missing optional date
+          date: undefined,
+          due_date: undefined,
+          created_at: '2026-10-09T11:00:00.000Z',
+        },
+      ],
+    };
+
+    const wb = buildExcelWorkbook(testTasksData);
+    assert(wb.SheetNames.includes('tasks'), 'Must include tasks sheet');
+
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const parsed = await parseExcelFile(buf);
+
+    assert(parsed.tasksCount === 4, `Expected 4 parsed tasks, got ${parsed.tasksCount}`);
+
+    const pTask1 = parsed.parsedData.tasks.find((t: any) => t.id === task1Id);
+    assert(!!pTask1, 'Task 1 must exist with exact ID');
+    assert(pTask1.status === 'Completed', 'Task 1 status Completed');
+    assert(pTask1.completed === true, 'Task 1 completed boolean true');
+    assert(pTask1.due_date === '2026-10-15', 'Task 1 due date preserved');
+    assert(pTask1.priority === 'High', 'Task 1 priority High');
+    assert(pTask1.description === 'Migrate PostgreSQL schemas and indexes with zero downtime', 'Task 1 description preserved');
+
+    const pTask2 = parsed.parsedData.tasks.find((t: any) => t.id === task2Id);
+    assert(!!pTask2, 'Task 2 must exist with exact ID');
+    assert(pTask2.status === 'In Progress', 'Task 2 status In Progress');
+    assert(pTask2.completed === false, 'Task 2 completed boolean false');
+    assert(pTask2.due_date === '2026-10-20', 'Task 2 due date preserved');
+
+    const pTask3 = parsed.parsedData.tasks.find((t: any) => t.id === task3Id);
+    assert(!!pTask3, 'Task 3 with empty optional fields must parse cleanly');
+    assert(pTask3.status === 'Pending', 'Task 3 status Pending');
+    assert(pTask3.due_date === '2026-10-25', 'Task 3 due date preserved');
+
+    const pTask4 = parsed.parsedData.tasks.find((t: any) => t.id === task4Id);
+    assert(!!pTask4, 'Task 4 must exist with exact ID');
+    assert(pTask4.status === 'Deferred', 'Task 4 status Deferred preserved');
+  });
+
+  // Test 12: Journal entries from different dates and multiline text
+  await test('12. Daily journal entries from different dates with multiline text & Markdown preserved', async () => {
+    const journal1Date = '2026-10-09';
+    const journal2Date = '2026-10-10';
+    const journal3Date = '2026-10-11';
+
+    const multilineJournalContent = `# Daily Reflection & Execution Plan
+
+Today was a remarkably focused and productive deep work day.
+
+## Key Wins
+1. Completed full relational database migration for all entities.
+2. Verified multi-sheet workbook export and import round-trip.
+3. Maintained 100% habit streak across morning fitness and deep coding.
+
+> "Discipline is choosing between what you want now and what you want most." — Abraham Lincoln
+
+### Challenges & Adjustments
+- Need to ensure bedtime wind-down starts by 22:30.
+- Tomorrow's #1 priority: Executive review presentation.`;
+
+    const testJournalData: FullExportData = {
+      ...baseData,
+      daily_journal: [
+        {
+          id: 'j1111111-1111-1111-1111-111111111111',
+          date: journal1Date,
+          title: 'Day 1: Solid Foundation',
+          content: 'Started sprint with high momentum and clear focus.',
+          mood: 'great',
+          energy_level: 5,
+          productivity: 5,
+          highlights: 'Morning workout hit new personal record',
+          gratitude: 'Grateful for health, supportive peers, and continuous learning',
+          wins: 'Shipped task module',
+          challenges: 'Afternoon fatigue',
+          priorities: 'Rest well tonight',
+          tags: ['#sprint', '#focus', '#habits'],
+          created_at: '2026-10-09T08:00:00.000Z',
+        },
+        {
+          id: 'j2222222-2222-2222-2222-222222222222',
+          date: journal2Date,
+          title: 'Day 2: Deep Work & Multiline Synthesis',
+          content: multilineJournalContent,
+          mood: 'excellent',
+          energy_level: 5,
+          productivity: 5,
+          highlights: 'Deep work block uninterrupted for 3 hours',
+          gratitude: 'Clarity of mind and structured thinking',
+          wins: 'Relational engine complete',
+          challenges: 'None',
+          priorities: 'Ship milestone',
+          tags: ['#productivity', '#reflection'],
+          created_at: '2026-10-10T08:00:00.000Z',
+        },
+        {
+          id: 'j3333333-3333-3333-3333-333333333333',
+          date: journal3Date,
+          // Optional fields empty to test graceful fallback
+          title: 'Day 3: Quiet Reset',
+          content: 'Rest day and weekly review planning.',
+          mood: undefined,
+          energy_level: undefined,
+          created_at: '2026-10-11T08:00:00.000Z',
+        },
+      ],
+    };
+
+    const wb = buildExcelWorkbook(testJournalData);
+    assert(wb.SheetNames.includes('daily_journal'), 'Must include daily_journal sheet');
+
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const parsed = await parseExcelFile(buf);
+
+    assert(parsed.journalCount === 3, `Expected 3 journal entries, got ${parsed.journalCount}`);
+
+    const pJ1 = parsed.parsedData.daily_journal.find((j: any) => j.date === journal1Date);
+    assert(!!pJ1, 'Journal 1 found by date');
+    assert(pJ1.title === 'Day 1: Solid Foundation', 'Journal 1 title preserved');
+    assert(pJ1.mood === 'great', 'Journal 1 mood preserved');
+    assert(pJ1.energy_level === 5, 'Journal 1 energy_level preserved');
+
+    const pJ2 = parsed.parsedData.daily_journal.find((j: any) => j.date === journal2Date);
+    assert(!!pJ2, 'Journal 2 found by date');
+    assert(pJ2.title === 'Day 2: Deep Work & Multiline Synthesis', 'Journal 2 title preserved');
+    // Ensure multiline content preserved including newlines and Markdown structure
+    assert(pJ2.content.includes('# Daily Reflection & Execution Plan'), 'Markdown heading preserved');
+    assert(pJ2.content.includes('## Key Wins'), 'Markdown section preserved');
+    assert(pJ2.content.includes('> "Discipline is choosing'), 'Markdown blockquote preserved');
+    assert(pJ2.content.includes('\n'), 'Newlines in multiline text preserved');
+
+    const pJ3 = parsed.parsedData.daily_journal.find((j: any) => j.date === journal3Date);
+    assert(!!pJ3, 'Journal 3 found by date');
+    assert(pJ3.content === 'Rest day and weekly review planning.', 'Journal 3 content preserved');
+  });
+
+  // Test 13: Notes with Unicode characters, emojis, smart quotes & checklists
+  await test('13. Notes with Unicode characters, emojis, smart quotes & checklists round-trip intact', async () => {
+    const note1Id = 'n1111111-1111-1111-1111-111111111111';
+    const note2Id = 'n2222222-2222-2222-2222-222222222222';
+
+    const unicodeContent = `# 🚀 Digital Second Brain: High-Performance Architecture ✨
+
+“Excellence is not an act, but a habit.” — Will Durant
+
+## 🧠 Core Philosophy
+- 🧘 Mindfulness & Clarity: 10 minutes daily breathwork
+- 🎯 Intentional Focus: Zero distractions during deep work blocks
+- ☕ Café sessions & résumé updates (testing accents: café, résumé, naïve)
+- 🌏 Internationalization: 日本語テスト • தமிழ் • Español • Deutsch
+
+### Checklist Items
+- [x] Read chapter 4 of Atomic Habits
+- [ ] Review sprint backlog
+- [x] Drink 3L water`;
+
+    const testNotesData: FullExportData = {
+      ...baseData,
+      notes: [
+        {
+          id: note1Id,
+          title: '🚀 Second Brain & High-Performance Rituals ✨',
+          content: unicodeContent,
+          category: 'Personal Development',
+          type: 'note',
+          tags: ['#habits', '#unicode', '#excellence'],
+          pinned: true,
+          favorite: true,
+          archived: false,
+          color: '#10B981',
+          created_at: '2026-10-09T10:00:00.000Z',
+          updated_at: '2026-10-09T12:00:00.000Z',
+        },
+        {
+          id: note2Id,
+          title: 'Grocery & Essentials Checklist 🛒',
+          content: 'Weekly healthy essentials',
+          type: 'checklist',
+          checklist: [
+            { id: 'chk-1', text: 'Avocados & Organic Berries 🥑', completed: true },
+            { id: 'chk-2', text: 'Greek Yogurt & Almonds 🥜', completed: false },
+            { id: 'chk-3', text: 'Green Tea & Sparkling Water 🍵', completed: true },
+          ],
+          tags: ['#shopping', '#health'],
+          pinned: false,
+          favorite: false,
+          archived: false,
+          color: 'default',
+          created_at: '2026-10-09T11:00:00.000Z',
+        },
+      ],
+    };
+
+    const wb = buildExcelWorkbook(testNotesData);
+    assert(wb.SheetNames.includes('notes'), 'Must include notes sheet');
+
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const parsed = await parseExcelFile(buf);
+
+    assert(parsed.notesCount === 2, `Expected 2 notes, got ${parsed.notesCount}`);
+
+    const pNote1 = parsed.parsedData.notes.find((n: any) => n.id === note1Id);
+    assert(!!pNote1, 'Note 1 found by ID');
+    assert(pNote1.title.includes('🚀') && pNote1.title.includes('✨'), 'Note 1 emojis in title preserved');
+    assert(pNote1.content.includes('“Excellence is not an act, but a habit.”'), 'Smart curly quotes preserved');
+    assert(pNote1.content.includes('café, résumé, naïve'), 'Accented characters preserved');
+    assert(pNote1.content.includes('日本語テスト'), 'CJK Unicode characters preserved');
+    assert(pNote1.pinned === true, 'Note 1 pinned boolean preserved');
+    assert(pNote1.favorite === true, 'Note 1 favorite boolean preserved');
+
+    const pNote2 = parsed.parsedData.notes.find((n: any) => n.id === note2Id);
+    assert(!!pNote2, 'Note 2 found by ID');
+    assert(pNote2.title.includes('🛒'), 'Note 2 emoji preserved');
+    assert(Array.isArray(pNote2.checklist), 'Note 2 checklist parsed as array');
+    assert(pNote2.checklist.length === 3, 'Note 2 checklist item count 3');
+    assert(pNote2.checklist[0].text.includes('🥑'), 'Checklist emoji preserved');
+    assert(pNote2.checklist[0].completed === true, 'Checklist item completion preserved');
+  });
+
+  // Test 14: Comprehensive round-trip equality (IDs, field values, record counts)
+  await test('14. Full relational dataset round-trip satisfies complete ID, field value, and count equality', async () => {
+    const fullComprehensiveData: FullExportData = {
+      app: 'Vignesh Habit Tracker',
+      version: '3.0',
+      exported_at: '2026-10-09T12:00:00.000Z',
+      habits: baseData.habits,
+      habit_entries: baseData.habit_entries,
+      goals: baseData.goals,
+      mood_tracker: baseData.mood_tracker,
+      daily_journal: [
+        {
+          id: 'j-roundtrip-1',
+          date: '2026-10-09',
+          title: 'Roundtrip Test Entry',
+          content: 'Line 1: Beginning\nLine 2: Middle paragraph\nLine 3: Conclusion',
+          mood: 'great',
+          energy_level: 4,
+          created_at: '2026-10-09T08:00:00.000Z',
+        },
+      ],
+      weekly_plans: baseData.weekly_plans,
+      weekly_reviews: baseData.weekly_reviews,
+      reflections: baseData.reflections,
+      habit_categories: baseData.habit_categories,
+      affirmations: [
+        {
+          id: 'aff-roundtrip-1',
+          quote: 'Consistency is the DNA of mastery.',
+          author: 'Robin Sharma',
+          active: true,
+          created_at: '2026-10-09T08:00:00.000Z',
+        },
+      ],
+      tasks: [
+        {
+          id: 'task-roundtrip-1',
+          title: 'Full Stack Integration',
+          category: 'engineering',
+          priority: 'High',
+          status: 'Completed',
+          completed: true,
+          date: '2026-10-15',
+          due_date: '2026-10-15',
+          notes: 'Tested and verified',
+          created_at: '2026-10-09T08:00:00.000Z',
+        },
+      ],
+      notes: [
+        {
+          id: 'note-roundtrip-1',
+          title: 'Knowledge Base 💡',
+          content: 'Key concepts:\n- Atomic commits\n- Immutable records\n- Fast roundtrips ⚡',
+          type: 'note',
+          pinned: true,
+          created_at: '2026-10-09T08:00:00.000Z',
+        },
+      ],
+      settings: {
+        theme: 'light',
+        auto_lock_minutes: 15,
+        week_start: 'sunday',
+      },
+    };
+
+    const wb = buildExcelWorkbook(fullComprehensiveData);
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const cleanDataset = await parseExcelFile(buf);
+
+    // Record counts
+    assert(cleanDataset.habitsCount === fullComprehensiveData.habits.length, 'Habits count equality');
+    assert(cleanDataset.entriesCount === fullComprehensiveData.habit_entries.length, 'Entries count equality');
+    assert(cleanDataset.goalsCount === fullComprehensiveData.goals.length, 'Goals count equality');
+    assert(cleanDataset.moodsCount === fullComprehensiveData.mood_tracker.length, 'Moods count equality');
+    assert(cleanDataset.journalCount === fullComprehensiveData.daily_journal.length, 'Journal count equality');
+    assert(cleanDataset.plansCount === fullComprehensiveData.weekly_plans.length, 'Plans count equality');
+    assert(cleanDataset.reviewsCount === fullComprehensiveData.weekly_reviews.length, 'Reviews count equality');
+    assert(cleanDataset.reflectionsCount === fullComprehensiveData.reflections.length, 'Reflections count equality');
+    assert(cleanDataset.categoriesCount === fullComprehensiveData.habit_categories!.length, 'Categories count equality');
+    assert(cleanDataset.affirmationsCount === fullComprehensiveData.affirmations!.length, 'Affirmations count equality');
+    assert(cleanDataset.tasksCount === fullComprehensiveData.tasks!.length, 'Tasks count equality');
+    assert(cleanDataset.notesCount === fullComprehensiveData.notes!.length, 'Notes count equality');
+
+    // ID and field preservation for every entity
+    assert(cleanDataset.parsedData.habits[0].id === fullComprehensiveData.habits[0].id, 'Habit ID equal');
+    assert(cleanDataset.parsedData.habits[0].name === fullComprehensiveData.habits[0].name, 'Habit name equal');
+    assert(cleanDataset.parsedData.habit_entries[0].id === fullComprehensiveData.habit_entries[0].id, 'Entry ID equal');
+    assert(cleanDataset.parsedData.goals[0].id === fullComprehensiveData.goals[0].id, 'Goal ID equal');
+    assert(cleanDataset.parsedData.tasks[0].id === 'task-roundtrip-1', 'Task ID equal');
+    assert(cleanDataset.parsedData.tasks[0].status === 'Completed', 'Task status equal');
+    assert(cleanDataset.parsedData.notes[0].id === 'note-roundtrip-1', 'Note ID equal');
+    assert(cleanDataset.parsedData.notes[0].title === 'Knowledge Base 💡', 'Note title equal');
+    assert(cleanDataset.parsedData.affirmations![0].id === 'aff-roundtrip-1', 'Affirmation ID equal');
+    assert(cleanDataset.parsedData.affirmations![0].quote === 'Consistency is the DNA of mastery.', 'Affirmation quote equal');
+  });
+
+  // Test 15: Selected worksheets mode validation
+  await test('15. Selected worksheets export and import only contains specified tables without side effects', async () => {
+    const customExport = buildExcelWorkbook(baseData, {
+      selectedTables: ['tasks', 'goals'],
+    });
+
+    assert(customExport.SheetNames.includes('tasks'), 'Selected tasks sheet included');
+    assert(customExport.SheetNames.includes('goals'), 'Selected goals sheet included');
+    assert(!customExport.SheetNames.includes('habits'), 'Unselected habits sheet excluded');
+    assert(!customExport.SheetNames.includes('mood_tracker'), 'Unselected mood_tracker sheet excluded');
+
+    const buf = XLSX.write(customExport, { type: 'array', bookType: 'xlsx' });
+    const parsed = await parseExcelFile(buf);
+
+    assert(parsed.goalsCount === 1, 'Goals parsed from selected sheet');
+    assert(parsed.habitsCount === 0, 'Habits 0 since sheet omitted');
+    assert(parsed.moodsCount === 0, 'Moods 0 since sheet omitted');
+  });
+
   console.log(`\n========================================`);
   console.log(`Test Results: ${passed} passed, ${failed} failed`);
   console.log(`========================================\n`);

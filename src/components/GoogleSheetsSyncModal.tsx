@@ -47,6 +47,7 @@ import { api, EDIT_PASSWORD } from '../api';
 import { useProtectedAction } from '../context/ProtectedActionContext';
 import { downloadExcelWorkbook } from '../utils/excel';
 import { AppSettings } from '../types';
+import { sanitizeErrorMessage } from '../utils/importEngine';
 
 interface GoogleSheetsSyncModalProps {
   isOpen: boolean;
@@ -57,6 +58,8 @@ interface GoogleSheetsSyncModalProps {
   moodsCount: number;
   goalsCount: number;
   journalsCount: number;
+  tasksCount?: number;
+  notesCount?: number;
   onUpdateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
   onRefreshData: () => void;
   fullExportData?: FullExportData;
@@ -74,6 +77,8 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   moodsCount = 0,
   goalsCount = 0,
   journalsCount = 0,
+  tasksCount = 0,
+  notesCount = 0,
   onUpdateSetting,
   onRefreshData,
   fullExportData,
@@ -102,6 +107,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
 
   // Mode and table selection in Import tab
   const [importMode, setImportMode] = useState<ImportMode>('merge');
+  const [confirmReplace, setConfirmReplace] = useState(false);
   const [selectedTables, setSelectedTables] = useState<Record<SupportedTableName, boolean>>(() => {
     const map: Record<string, boolean> = {};
     ORDERED_TABLE_NAMES.forEach((tbl) => {
@@ -210,16 +216,18 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         const res = await api.syncGoogleSheets(trimmed, fullExportData);
         setPushStatus('success');
         setPushMessage(
-          res.message || 'Successfully saved records into your Google Sheet relational database!'
+          sanitizeErrorMessage(res.message || 'Successfully saved records into your Google Sheet relational database!')
         );
         onUpdateSetting('google_sheets_script_url', trimmed);
         const nowIso = new Date().toISOString();
-        onUpdateSetting('google_sheets_last_synced', res.timestamp || nowIso);
         onUpdateSetting('google_sheets_last_pushed', res.timestamp || nowIso);
+        if (res.stats) {
+          onUpdateSetting('last_push_stats', res.stats);
+        }
       } catch (err: any) {
         setPushStatus('error');
         setPushMessage(
-          err?.message || 'Push failed. Ensure Web App is deployed with "Anyone" access.'
+          sanitizeErrorMessage(err?.message || 'Push failed. Ensure Web App is deployed with "Anyone" access.')
         );
       } finally {
         setIsPushing(false);
@@ -291,17 +299,26 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
       try {
         const pullRes = await api.pullGoogleSheets(trimmed);
         if (pullRes?.data) {
-          await api.importData({
+          const importRes = await api.importData({
             ...pullRes.data,
             mode: 'merge',
           });
           onRefreshData();
           setPullStatus('success');
-          setPullMessage(pullRes.message || 'Successfully pulled and updated current website data from Google Sheets!');
+          setPullMessage(
+            sanitizeErrorMessage(pullRes.message || importRes?.message || 'Successfully pulled and updated current website data from Google Sheets!')
+          );
+          const nowIso = new Date().toISOString();
+          onUpdateSetting('google_sheets_last_pulled', pullRes.timestamp || nowIso);
+          if (importRes?.stats) {
+            onUpdateSetting('last_pull_stats', importRes.stats);
+          }
         }
       } catch (err: any) {
         setPullStatus('error');
-        setPullMessage(err?.message || 'Direct pull failed. Ensure Web App is deployed as Anyone.');
+        setPullMessage(
+          sanitizeErrorMessage(err?.message || 'Direct pull failed. Ensure Web App is deployed as Anyone.')
+        );
       } finally {
         setIsPulling(false);
       }
@@ -320,7 +337,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         setPasswordError('');
         await runDirectPull();
       } catch (e: any) {
-        setPasswordError(e?.message || 'Verification failed');
+        setPasswordError(sanitizeErrorMessage(e?.message || 'Verification failed'));
       }
     }
   };
@@ -335,34 +352,43 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
       try {
         // Filter data if mode is 'selected'
         const payloadToImport: any = {};
-        if (importMode === 'selected') {
-          for (const tbl of ORDERED_TABLE_NAMES) {
-            if (selectedTables[tbl]) {
-              if (tbl === 'categories') {
-                payloadToImport.habit_categories = (importedData as any).categories || importedData.habit_categories;
-              } else if (tbl === 'monthly_reflections') {
-                payloadToImport.reflections = importedData.reflections;
-              } else {
-                payloadToImport[tbl] = (importedData as any)[tbl];
-              }
+        if (importMode === 'replace') {
+          if (!confirmReplace) {
+            setPasswordError('Destructive action required: please confirm replacing your data.');
+            return;
+          }
+          Object.assign(payloadToImport, importedData);
+          payloadToImport.mode = 'replace';
+          payloadToImport.confirm_replace = true;
+        } else if (importMode === 'selected') {
+          const chosen = ORDERED_TABLE_NAMES.filter((t) => selectedTables[t]);
+          payloadToImport.mode = 'selected';
+          payloadToImport.selected_tables = chosen;
+          for (const tbl of chosen) {
+            if (tbl === 'categories') {
+              payloadToImport.habit_categories = (importedData as any).categories || importedData.habit_categories;
+            } else if (tbl === 'monthly_reflections') {
+              payloadToImport.reflections = importedData.reflections;
+            } else {
+              payloadToImport[tbl] = (importedData as any)[tbl];
             }
           }
         } else {
           Object.assign(payloadToImport, importedData);
+          payloadToImport.mode = 'merge';
         }
 
-        const res = await api.importData({
-          ...payloadToImport,
-          mode: importMode,
-        });
+        const res = await api.importData(payloadToImport);
 
         const nowIso = new Date().toISOString();
-        onUpdateSetting('google_sheets_last_synced', nowIso);
         onUpdateSetting('google_sheets_last_pulled', nowIso);
-        setApplyReceipt(res.message || 'Data successfully imported from Google Sheet!');
+        if (res?.stats) {
+          onUpdateSetting('last_pull_stats', res.stats);
+        }
+        setApplyReceipt(sanitizeErrorMessage(res.message || 'Data successfully imported from Google Sheet!'));
         onRefreshData();
       } catch (err: any) {
-        setPasswordError(err?.message || 'Failed to apply import.');
+        setPasswordError(sanitizeErrorMessage(err?.message || 'Failed to apply import.'));
       } finally {
         setIsApplyingImport(false);
       }
@@ -683,8 +709,19 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                   </span>
                 </div>
                 <div className="text-[#8C8377] dark:text-slate-400 font-mono text-[10px]">
-                  Push: {formatDateTime(settings?.google_sheets_last_pushed || settings?.google_sheets_last_synced)} · Pull: {formatDateTime(settings?.google_sheets_last_pulled || settings?.google_sheets_last_synced)}
+                  Last Upload: {formatDateTime(settings?.google_sheets_last_pushed)} · Last Download: {formatDateTime(settings?.google_sheets_last_pulled)}
                 </div>
+                {(settings?.last_push_stats || settings?.last_pull_stats) && (
+                  <div className="text-[10px] text-[#7D766C] dark:text-slate-400 flex flex-wrap gap-x-3 gap-y-1 pt-1 border-t border-[#ECE6DC]/60 dark:border-slate-800">
+                    <span>Tasks: {settings?.last_push_stats?.tasks_count ?? 0} pushed / {settings?.last_pull_stats?.tasks_restored ?? 0} restored</span>
+                    <span>Journal: {settings?.last_push_stats?.journal_count ?? 0} pushed / {settings?.last_pull_stats?.journal_restored ?? 0} restored</span>
+                    <span>Notes: {settings?.last_push_stats?.notes_count ?? 0} pushed / {settings?.last_pull_stats?.notes_restored ?? 0} restored</span>
+                    <span>Total: {settings?.last_push_stats?.total_records ?? settings?.last_pull_stats?.total_records ?? 0}</span>
+                    <span className={Number(settings?.last_push_stats?.failed_records || settings?.last_pull_stats?.failed_records || 0) > 0 ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold'}>
+                      Failed: {settings?.last_push_stats?.failed_records ?? settings?.last_pull_stats?.failed_records ?? 0}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Auto Sync Toggle Cards */}
@@ -802,12 +839,12 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#7D766C] dark:text-slate-400 leading-relaxed">
-                      Uploads all 10 relational tables (README, habits, habit_entries, categories, goals, mood_tracker, daily_journal, weekly_plans, weekly_reviews, monthly_reflections, settings) into your Google Sheet.
+                      Uploads all 13 relational tables (README, habits, habit_entries, categories, goals, mood_tracker, daily_journal, weekly_plans, weekly_reviews, monthly_reflections, tasks, notes, settings) into your Google Sheet.
                     </p>
 
                     <div className="text-[10px] text-[#5C554B] dark:text-slate-300 font-mono space-y-0.5 pt-1">
-                      <div>• {habitsCount} Habits</div>
-                      <div>• {entriesCount} Habit Entries (Check-ins)</div>
+                      <div>• {habitsCount} Habits · {entriesCount} Habit Entries</div>
+                      <div>• {tasksCount} Tasks · {notesCount} Notes</div>
                       <div>• {moodsCount} Mood Logs · {goalsCount} Goals</div>
                     </div>
                   </div>
@@ -1097,6 +1134,30 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                       </div>
                     </div>
 
+                    {/* Replace Mode Destructive Confirmation Banner */}
+                    {importMode === 'replace' && (
+                      <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 flex items-start gap-3">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                        <div className="space-y-1.5 flex-1">
+                          <h6 className="font-bold text-xs text-rose-950 dark:text-rose-100">
+                            Destructive Action Confirmation Required
+                          </h6>
+                          <p className="text-[11px] text-rose-800 dark:text-rose-300 leading-relaxed">
+                            Replace mode will overwrite current records with incoming Google Sheet records for these worksheets. Unsupplied worksheets will remain untouched.
+                          </p>
+                          <label className="flex items-center gap-2 pt-1 font-semibold text-xs cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={confirmReplace}
+                              onChange={(e) => setConfirmReplace(e.target.checked)}
+                              className="rounded text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                            />
+                            <span>I confirm that I want to replace existing records.</span>
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Table checkboxes if Mode 3 */}
                     {importMode === 'selected' && (
                       <div className="pt-2 border-t border-[#ECE6DC] dark:border-slate-700 space-y-2">
@@ -1221,7 +1282,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                     <button
                       type="button"
                       onClick={handleConfirmImport}
-                      disabled={isApplyingImport}
+                      disabled={isApplyingImport || (importMode === 'replace' && !confirmReplace)}
                       className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5 shadow-2xs"
                     >
                       <CheckCheck className={`w-3.5 h-3.5 ${isApplyingImport ? 'animate-spin' : ''}`} />

@@ -1078,6 +1078,7 @@ export function App() {
       habit_categories: categoriesList,
       affirmations: affirmationsList,
       tasks,
+      notes: localStorageService.getNotes(),
       settings,
     };
   }, [
@@ -1679,6 +1680,8 @@ export function App() {
         moodsCount={calendarMoodEntries.length}
         goalsCount={goals.length}
         journalsCount={journals.length + (reflectionContent ? 1 : 0)}
+        tasksCount={tasks.length}
+        notesCount={localStorageService.getNotes().length}
         onUpdateSetting={handleUpdateSetting}
         onRefreshData={() => loadMonthData()}
         fullExportData={fullExportData}

@@ -405,40 +405,42 @@ A completely separate, dedicated emotional wellness system backed directly by th
     9. **`weekly_reviews`**: End-of-week reflection retrospectives (PK: `id`, `year`, `month`, `week_number`, `went_well`, `improve`, `next_focus`, timestamps).
     10. **`monthly_reflections`**: Deep retrospective monthly reviews (PK: `id`, `year`, `month`, `content`, timestamps).
     11. **`settings`**: User configuration parameters and preferences (PK: `setting_key`, `setting_value`, `description`, `updated_at`).
-- **Centralized Relational Schema & 100% Parity (`src/utils/dataSchema.ts`)**:
-  - **Single Source of Truth (v3.0.0)**: Central schema definition governing both **Excel (.xlsx)** and **Google Sheets** import, export, synchronization, and validation.
-  - **10 Logical Database Tables + README Sheet**:
+- **Complete Relational Excel Backup & Restoration Engine (`src/utils/excel.ts`, `server.ts`)**:
+  - **Single Source of Truth Relational Architecture**: Central schema definition governing both **Excel (.xlsx)** and **Google Sheets** import, export, synchronization, and validation with zero data truncation.
+  - **Comprehensive Multi-Sheet Support (All 13 Persistent Relational Entities + README)**:
     1. `README`: Complete schema metadata, table purposes, column definitions, primary keys, foreign keys, and synchronization guide.
-    2. `habits`: Routines, categories, cadence, priorities, goal links, target counts, and status (`id`, `name`, `category`, `frequency`, `priority`, `goal_id`, `target_count`, `schedule_days`, `status`, `archived_at`, `created_at`, `updated_at`).
+    2. `habits`: Routines, categories, cadence, priorities, goal links, target counts, schedule days, and status (`id`, `name`, `category`, `frequency`, `priority`, `goal_id`, `target_count`, `schedule_days`, `status`, `archived_at`, `created_at`, `updated_at`).
     3. `habit_entries`: Daily completion check-ins with foreign key to `habits.id` (`id`, `habit_id`, `date`, `completed`, `created_at`, `updated_at`).
-    4. `categories`: Habit classifications with visual emoji icons (`id`, `name`, `icon`, `created_at`).
-    5. `goals`: Vision milestones with progress percentages (`id`, `title`, `category`, `description`, `target_date`, `progress`, `status`, `created_at`, `updated_at`).
-    6. `mood_tracker`: Emotional wellness logs and energy ratings (`id`, `date`, `mood`, `mood_score`, `energy_level`, `note`, `created_at`, `updated_at`).
-    7. `daily_journal`: Micro-journaling notes per date (`id`, `date`, `content`, `mood`, `energy_level`, `created_at`, `updated_at`).
-    8. `weekly_plans`: Sprint targets and top 3 priorities (`id`, `year`, `month`, `week_number`, `main_goal`, `priority_1`, `priority_2`, `priority_3`, `target_percentage`, `created_at`, `updated_at`).
-    9. `weekly_reviews`: Retrospectives on wins, improvements, and focus (`id`, `year`, `month`, `week_number`, `went_well`, `improve`, `next_focus`, `created_at`, `updated_at`).
-    10. `monthly_reflections`: Deep monthly retro summaries (`id`, `year`, `month`, `content`, `created_at`, `updated_at`).
-    11. `settings`: Application configuration and preferences (`setting_key`, `setting_value`, `description`, `updated_at`).
-  - **Relational Data Integrity Rules**:
-    - **Header Row 1**: Strictly database column names matching schema with zero decorative or merged rows.
-    - **Primary Key Preservation**: Stable UUIDs preserved during round-trip export and import without re-generating IDs.
-    - **Foreign Key Integrity**: Automatic validation ensuring `habit_entries.habit_id` references valid habits and `habits.goal_id` references valid goals.
-    - **Standardized Formats**: Dates formatted as `YYYY-MM-DD`, booleans as uppercase `TRUE`/`FALSE`, timestamps as ISO-8601 strings.
-    - **Native Excel & Sheet Controls**: Row 1 freeze panes, navy blue header background (`#0F172A`), bold white text, and AutoFilter ranges enabled on all data tables.
-  - **Dedicated Relational Export Dialog (`src/components/ExcelExportModal.tsx`)**:
-    - **Export All Tables**: 1-click generation of the complete relational database backup.
-    - **Custom Table Selection**: Choose specific tables (`habits`, `habit_entries`, `goals`, `mood_tracker`, etc.) with live record counters.
-    - **Direct Download**: Client-side generation via SheetJS (`xlsx`) with fallback server streaming route.
-  - **Advanced Relational Importer (`src/components/ExcelImportModal.tsx`)**:
-    - **Schema & Foreign Key Validation**: Pre-validates required columns, duplicate primary keys, valid date formats, and foreign key references.
-    - **Row-Level Diagnostics**: Displays row-by-row error and warning badges with precise row numbers and field names.
-    - **Interactive Pre-Import Inspector**: Tabbed preview allowing inspection of parsed records per table before committing.
-    - **3 Flexible Import Modes**:
-      1. **Merge & Update (Recommended)**: Preserves existing data, inserts new records, and updates existing records by matching IDs.
-      2. **Replace All**: Replaces application data with workbook records with high-visibility warning protection.
-      3. **Import Selected Tables**: Checkbox selection of specific tables with dependency validation (e.g. alerts if child `habit_entries` are selected without parent `habits`).
-    - **Protected Write Action**: Guarded by edit password `9500`.
-  - **Automated Test Suite (`test/excel.test.ts`, `npm test`)**: 10 comprehensive tests covering workbook generation, round-trip serialization/deserialization, primary/foreign key preservation, duplicate ID rejection, invalid date detection, broken foreign key reporting, optional sheet omission, and empty workbook handling.
+    4. `tasks`: Personal and executive tasks, priorities, categories, due dates, follow-up dates, completion status, assigned to, notes, and habit associations (`id`, `date`, `time`, `title`, `description`, `category`, `priority`, `status`, `assigned_to`, `notes`, `follow_up_date`, `completed`, `habit_id`, `created_at`, `updated_at`).
+    5. `daily_journal`: Daily reflections, titles, multiline Markdown notes, mood ratings, energy levels, productivity ratings, gratitude, highlights, wins, challenges, top priorities, tags, and linked notes (`id`, `date`, `title`, `content`, `mood`, `energy_level`, `productivity`, `highlights`, `gratitude`, `wins`, `challenges`, `priorities`, `tags`, `linked_notes`, `created_at`, `updated_at`).
+    6. `notes`: Digital second brain documents, multiline Markdown content with headings, checklists with completion states, categories, tags, pinned, favorite, and archived flags, color tags, and Unicode characters (`id`, `title`, `content`, `type`, `category`, `checklist`, `tags`, `pinned`, `favorite`, `archived`, `color`, `created_at`, `updated_at`).
+    7. `goals`: Vision milestones with progress percentages (`id`, `title`, `category`, `description`, `target_date`, `progress`, `status`, `created_at`, `updated_at`).
+    8. `habit_categories` (and alias `categories`): Classifications with visual emoji icons (`id`, `name`, `icon`, `created_at`).
+    9. `mood_tracker`: Emotional wellness logs and energy ratings (`id`, `date`, `mood`, `mood_score`, `energy_level`, `note`, `created_at`, `updated_at`).
+    10. `reflections` (and alias `monthly_reflections`): Deep monthly retro summaries (`id`, `month`, `year`, `content`, `created_at`, `updated_at`).
+    11. `weekly_plans`: Sprint targets and top 3 priorities (`id`, `year`, `month`, `week_number`, `main_goal`, `priority_1`, `priority_2`, `priority_3`, `target_percentage`, `created_at`, `updated_at`).
+    12. `weekly_reviews`: Retrospectives on wins, improvements, and next focus (`id`, `year`, `month`, `week_number`, `went_well`, `improve`, `could_improve`, `next_focus`, `created_at`, `updated_at`).
+    13. `affirmations`: Daily motivational quotes, authors, images, active flags (`id`, `quote`, `author`, `image_url`, `active`, `created_at`, `updated_at`).
+    14. `settings`: Application configuration preferences (`id`, `setting_key`, `setting_value`, `updated_at`).
+  - **Complete Historical Scope (Multi-Month & Historical Datasets)**:
+    - Browser-side and server-side export paths fetch and bundle all records across all years and months—never truncating data to just the current active month, page, or filtered view.
+    - Server-side export (`GET /api/export?format=xlsx`) and browser-side export (`downloadExcelWorkbook`) utilize the unified `buildExcelWorkbook` engine to guarantee 100% identical outputs and column schemas.
+  - **Preservation of Complex Data & Content**:
+    - **Stable UUID Primary Keys**: Preserved during round-trip export and import without mutating or re-generating IDs.
+    - **Multiline Text & Markdown**: Preserves complex line breaks, Markdown headings (`#`, `##`), blockquotes (`>`), and bulleted lists.
+    - **Full Unicode & Internationalization**: Flawlessly preserves emojis (🚀, 🧘, ✨, 🥑), smart quotes (“ ”), accented characters (café, résumé), and non-Latin scripts (CJK, Tamil, etc.).
+    - **Structured Nested Fields**: Correctly serializes and deserializes JSON arrays and task checklists without truncation.
+  - **Pre-Commit Validation & Protection Against Data Loss**:
+    - Validates workbook structure, required fields, and primary key uniqueness before writing or modifying any records.
+    - If validation errors exist, the operation halts immediately, preventing partial data corruption or loss.
+  - **3 Flexible Import Strategies**:
+    1. **Merge & Update (Default)**: Inserts new records and updates existing records by matching IDs; prevents duplicate records on repeated imports.
+    2. **Replace All**: Replaces application data with workbook records with explicit confirmation safeguarding.
+    3. **Selected Worksheets**: Imports only chosen worksheets (e.g. only `tasks` or only `notes`), preserving all other existing database tables intact without overwriting or clearing them.
+  - **Dedicated Relational Modals (`ExcelExportModal.tsx`, `ExcelImportModal.tsx`)**:
+    - Dynamic live counters, table icons, tabbed preview inspectors, and row-level diagnostics.
+    - Protected by master editing password `9500`.
+  - **Automated Test Suite (`test/excel.test.ts`, `npm test`)**: 15 comprehensive tests covering workbook generation, round-trip equality, task statuses, due dates, multiline journals, Unicode notes, optional fields, primary/foreign key preservation, duplicate ID rejection, invalid date detection, broken foreign key reporting, optional sheet omission, and empty workbook handling.
   - **1-Click Relational Template**: `vignesh_habit_tracker_relational_template.xlsx` download with sample linked rows and complete schema guide.
   - **CSV & JSON Portability**: Retains instant CSV spreadsheet downloads and complete JSON export/import.
 - **Google Sheet Database Center (Two-Way Live Database via Apps Script)** (`src/components/GoogleSheetsSyncModal.tsx`, `src/utils/googleAppsScript.ts`):
@@ -526,8 +528,8 @@ The backend is built for zero-latency execution, complete reliability, and offli
 - `GET /api/export`: Generates downloadable Excel workbook (`format=xlsx` / `format=excel`), CSV spreadsheet (`format=csv`), or complete JSON backup (`format=json`).
 - `POST /api/import`: Restores data from Excel or JSON with atomic updates, supporting merge and replace strategies protected by edit session token.
 - `POST /api/google-sheets/test`: Tests connection to the user's deployed Google Apps Script Web App.
-- `POST /api/google-sheets/sync`: Proxies complete data payload to Google Apps Script Web App, automatically creating and formatting sheets for Habits, Check-ins, Goals, Mood, and Journal with zero CORS errors.
-- `POST /api/google-sheets/pull`: Retrieves full data from Google Sheets via the Apps Script Web App for importing into the tracker.
+- `POST /api/google-sheets/sync`: Proxies complete data payload to Google Apps Script Web App, automatically creating and formatting sheets for all 13 relational tables (Habits, Habit Entries, Tasks, Daily Journal, Notes, Reflections, Goals, Habit Categories, Mood Tracker, Weekly Plans, Weekly Reviews, Affirmations, Settings) with zero CORS errors.
+- `POST /api/google-sheets/pull`: Retrieves full data from Google Sheets via the Apps Script Web App for importing into the tracker with full pre-commit validation and mode selection.
 
 ---
 
@@ -537,9 +539,10 @@ The backend is built for zero-latency execution, complete reliability, and offli
 - **Primary Cloud Provider**: **Google Sheets (Two-Way Live Relational Engine via Google Apps Script)**
 - **Local Persistent Engine**: **Atomic Disk Persistence (`data/db.json`)**
 - **Schema Parity**: 100% Relational Schema Parity across Google Sheets, Excel (.xlsx), and JSON.
-- **Tables Synchronized**:
-### Complete Relational Database Structure (All 11 Tables)
-The application architecture is strictly organized into 11 relational tables matching the native database structure:
+- **Tables Synchronized**: All 13 canonical tables (`habits`, `habit_entries`, `tasks`, `daily_journal`, `notes`, `reflections`, `goals`, `habit_categories`, `mood_tracker`, `weekly_plans`, `weekly_reviews`, `affirmations`, `settings`).
+
+### Complete Relational Database Structure (All 13 Tables)
+The application architecture is strictly organized into 13 relational tables matching the native database structure:
 
 ```text
                     ┌──────────────────┐
@@ -575,14 +578,17 @@ The application architecture is strictly organized into 11 relational tables mat
                     └──────────────────┘
 
     ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-    │  daily_journal   │  │   mood_tracker   │  │ weekly_plans     │
+    │      tasks       │  │      notes       │  │  daily_journal   │
     └──────────────────┘  └──────────────────┘  └──────────────────┘
     ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-    │ weekly_reviews   │  │   reflections    │  │    settings      │
+    │   mood_tracker   │  │  weekly_plans    │  │  weekly_reviews  │
     └──────────────────┘  └──────────────────┘  └──────────────────┘
-    ┌──────────────────┐  ┌──────────────────┐
-    │   affirmations   │  │ habit_categories │
-    └──────────────────┘  └──────────────────┘
+    ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+    │   reflections    │  │   affirmations   │  │ habit_categories │
+    └──────────────────┘  └──────────────────┘  └──────────────────┘
+    ┌──────────────────┐
+    │     settings     │
+    └──────────────────┘
 ```
 
 #### Table Schema Specifications:
@@ -598,6 +604,7 @@ The application architecture is strictly organized into 11 relational tables mat
 2. **`daily_journal`** (7 columns): Stores daily journal entries, moods, and energy levels.
    - `id`: UUID (PK, NOT NULL)
    - `date`: DATE (NOT NULL)
+   - `title`: TEXT (NULLABLE)
    - `content`: TEXT (NULLABLE)
    - `mood`: TEXT (NULLABLE)
    - `energy_level`: INTEGER (NULLABLE)
@@ -661,13 +668,42 @@ The application architecture is strictly organized into 11 relational tables mat
    - `created_at`: TIMESTAMPTZ (NOT NULL)
    - `updated_at`: TIMESTAMPTZ (NOT NULL)
 
-9. **`settings`** (4 columns): Stores application preferences and configuration.
+9. **`tasks`** (13 columns): Stores personal tasks, assignments, priorities, and follow-ups.
    - `id`: UUID (PK, NOT NULL)
-   - `setting_key`: TEXT (NOT NULL)
-   - `setting_value`: JSONB (NULLABLE)
+   - `date`: DATE (NULLABLE, Due date YYYY-MM-DD)
+   - `time`: TEXT (NULLABLE, Target time HH:MM)
+   - `title`: TEXT (NOT NULL, Task name/title)
+   - `description`: TEXT (NULLABLE, Multiline description)
+   - `category`: TEXT (NULLABLE, Category name)
+   - `priority`: TEXT (NULLABLE, High, Medium, Low)
+   - `status`: TEXT (NOT NULL, Pending, In Progress, Completed, Deferred)
+   - `assigned_to`: TEXT (NULLABLE, Assignee)
+   - `notes`: TEXT (NULLABLE, Remarks or notes)
+   - `follow_up_date`: DATE (NULLABLE, Follow-up date YYYY-MM-DD)
+   - `created_at`: TIMESTAMPTZ (NOT NULL)
    - `updated_at`: TIMESTAMPTZ (NOT NULL)
 
-10. **`weekly_plans`** (11 columns): Stores weekly goals, top 3 priorities, and target completion percentages.
+10. **`notes`** (12 columns): Stores Second Brain knowledge notes, markdown records, and checklists.
+    - `id`: UUID (PK, NOT NULL)
+    - `title`: TEXT (NOT NULL, Note title)
+    - `content`: TEXT (NULLABLE, Complete markdown/multiline content)
+    - `type`: TEXT (NULLABLE, text or checklist)
+    - `category`: TEXT (NULLABLE, Folder/category)
+    - `checklist`: TEXT/JSON (NULLABLE, Structured checklist items)
+    - `tags`: TEXT/ARRAY (NULLABLE, Hashtags and categories)
+    - `pinned`: BOOLEAN (NOT NULL, Pinned status)
+    - `favorite`: BOOLEAN (NOT NULL, Favorite status)
+    - `color`: TEXT (NULLABLE, Card accent color)
+    - `created_at`: TIMESTAMPTZ (NOT NULL)
+    - `updated_at`: TIMESTAMPTZ (NOT NULL)
+
+11. **`settings`** (4 columns): Stores application preferences and configuration.
+    - `id`: UUID (PK, NOT NULL)
+    - `setting_key`: TEXT (NOT NULL)
+    - `setting_value`: JSONB (NULLABLE)
+    - `updated_at`: TIMESTAMPTZ (NOT NULL)
+
+12. **`weekly_plans`** (11 columns): Stores weekly goals, top 3 priorities, and target completion percentages.
     - `id`: UUID (PK, NOT NULL)
     - `year`: INTEGER (NOT NULL)
     - `month`: INTEGER (NOT NULL)
@@ -680,7 +716,7 @@ The application architecture is strictly organized into 11 relational tables mat
     - `created_at`: TIMESTAMPTZ (NOT NULL)
     - `updated_at`: TIMESTAMPTZ (NOT NULL)
 
-11. **`weekly_reviews`** (10 columns): Stores weekly review retrospectives and improvement plans.
+13. **`weekly_reviews`** (10 columns): Stores weekly review retrospectives and improvement plans.
     - `id`: UUID (PK, NOT NULL)
     - `year`: INTEGER (NOT NULL)
     - `month`: INTEGER (NOT NULL)
@@ -694,55 +730,80 @@ The application architecture is strictly organized into 11 relational tables mat
 
 ---
 
-### 📊 Relational Excel Export System (`.xlsx`)
+### 📊 Relational Excel Export & Import System (`.xlsx`)
 - **Full Relational Backup**:
   - The application provides a complete relational multi-sheet Excel workbook export via client-side generation (`ExcelExportModal`) and backend `/api/export?format=xlsx`.
   - **Worksheet 1 (`README`)**: System metadata, schema version, table index with record counts and primary/foreign key mappings.
-  - **Worksheet 2 (`DATABASE_SCHEMA`)**: Complete PostgreSQL data dictionary listing all 11 tables, column names, PostgreSQL data types (UUID, TEXT, DATE, TIMESTAMPTZ, NUMERIC, INTEGER, BOOLEAN, ARRAY, JSONB), nullability, primary/foreign keys, and field descriptions.
-  - **Worksheets 3–13**: 11 individual tables (`affirmations`, `daily_journal`, `goals`, `habit_categories`, `habit_entries`, `habits`, `mood_tracker`, `reflections`, `settings`, `weekly_plans`, `weekly_reviews`) formatted strictly with:
+  - **Worksheet 2 (`DATABASE_SCHEMA`)**: Complete PostgreSQL data dictionary listing all 13 tables, column names, PostgreSQL data types (UUID, TEXT, DATE, TIMESTAMPTZ, NUMERIC, INTEGER, BOOLEAN, ARRAY, JSONB), nullability, primary/foreign keys, and field descriptions.
+  - **Worksheets 3–15**: 13 individual tables (`affirmations`, `daily_journal`, `goals`, `habit_categories`, `habit_entries`, `habits`, `mood_tracker`, `reflections`, `settings`, `weekly_plans`, `weekly_reviews`, `tasks`, `notes`) formatted strictly with:
     - Row 1: Strict column names matching the PostgreSQL database schema.
     - Rows 2+: Real data records.
     - Frozen header rows pinned during scrolling.
     - Excel AutoFilter enabled across all columns.
     - Automatic column width padding.
 - **Interactive Export Modal (`ExcelExportModal.tsx`)**:
-  - **All Tables Mode**: Exports all 11 database tables in a single click.
+  - **All Tables Mode**: Exports all 13 database tables in a single click.
   - **Custom Select Mode**: Allows users to pick specific tables with live record count indicators.
-  - **PostgreSQL Schema Reference Tab**: Built-in searchable interactive dictionary table allowing users to review all 71+ database columns and types directly inside the tracker before exporting.
+  - **PostgreSQL Schema Reference Tab**: Built-in searchable interactive dictionary table allowing users to review all 85+ database columns and types directly inside the tracker before exporting.
   - **Download Blank Template**: Generates an empty relational template with sample UUIDs, valid foreign key references, and schema guidelines.
+- **Relational Excel & Cloud Import & Restoration Engine (`src/utils/importEngine.ts`, `ExcelImportModal.tsx`, `GoogleSheetsSyncModal.tsx`)**:
+  - **Three Strictly Enforced Import Strategies**:
+    1. **Merge & Update (Recommended)**:
+       - Preserves existing local records and appends missing records.
+       - Employs a consistent, deterministic conflict-resolution policy: matches existing records primarily by stable primary key (`id`); falls back to natural composite keys (`habit_id + date` for check-in entries, `date` for daily journal and mood tracker, `year + month + week_number` for weekly plans and reviews, `title + date` for tasks).
+       - Completely eliminates duplicate records when importing the same backup file repeatedly.
+    2. **Replace All (Destructive Mode with Explicit Confirmation)**:
+       - Replaces **only the intended dataset** (tables provided in the payload or selected in `selected_tables`). Tables not present in the workbook or unselected remain 100% untouched.
+       - Requires **explicit confirmation** via a high-visibility warning card and required checkbox (`confirm_replace: true`) before enabling destructive execution. Any attempt to invoke Replace mode without confirmation is rejected with HTTP 400.
+       - Pre-validates every single record in the payload before committing any changes.
+    3. **Selected Worksheets Mode**:
+       - Imports only designated worksheets without overwriting or modifying unselected tables.
+       - Respects relational table relationships and dependencies: enforces foreign-key validation (e.g., verifying that all `habit_entries.habit_id` references exist in the local database or in the incoming `habits` batch). Rejects orphaned records with descriptive error messages before committing.
+  - **Transactional Pre-Commit Validation & Atomic Rollback**:
+    - Validates batch data before touching active memory or disk: detects duplicate primary keys within the batch, rejects malformed rows (non-objects or nulls), checks required fields, and validates real calendar dates (`isValidDateValue`).
+    - Staged in a separate candidate database clone. If any validation or parsing failure occurs, the engine rolls back atomically to the pre-import snapshot with zero data corruption or loss.
+    - Failed requests return structured HTTP 400/500 error responses and never show false success messages in the UI.
+  - **Automated Verification (`test/importRestoration.test.ts`)**:
+    - Proven across 14 dedicated test scenarios covering:
+      1. Duplicate prevention on repeated backup imports.
+      2. Unrelated table preservation in selected-table imports.
+      3. Zero data loss on failed imports (invalid dates, duplicate batch IDs, broken foreign keys).
+      4. Adherence to Merge vs. Replace mode rules and confirmation requirements.
+      5. Full preservation of multiline tasks and Daily Journal entries.
 
 ---
 
-### 🔄 Real-Time Google Sheets Reflection & 11-Table Relational Sync
-- **100% PostgreSQL Schema Parity in Google Sheets**:
-  - The Google Sheets integration mirrors the exact 11 PostgreSQL tables structure:
-    1. `affirmations` (`id`, `quote`, `author`, `image_url`, `active`, `created_at`, `updated_at`)
-    2. `daily_journal` (`id`, `date`, `content`, `mood`, `energy_level`, `created_at`, `updated_at`)
-    3. `goals` (`id`, `title`, `description`, `category`, `target_date`, `progress`, `status`, `created_at`, `updated_at`)
-    4. `habit_categories` (`id`, `name`, `icon`, `created_at` — 4 columns strictly, with `categories` alias support)
-    5. `habit_entries` (`id`, `habit_id`, `date`, `completed`, `created_at`, `updated_at`)
-    6. `habits` (`id`, `name`, `category`, `frequency`, `priority`, `goal_id`, `target_count`, `schedule_days`, `status`, `archived_at`, `created_at`, `updated_at`)
-    7. `mood_tracker` (`id`, `date`, `mood`, `mood_score`, `energy_level`, `note`, `created_at`, `updated_at` — 8 columns strictly)
-    8. `reflections` (`id`, `month`, `year`, `content`, `created_at`, `updated_at` — with `monthly_reflections` alias support)
-    9. `settings` (`id`, `setting_key`, `setting_value`, `updated_at` — 4 columns strictly)
-    10. `weekly_plans` (`id`, `year`, `month`, `week_number`, `main_goal`, `priority_1`, `priority_2`, `priority_3`, `target_percentage`, `created_at`, `updated_at` — 11 columns strictly)
-    11. `weekly_reviews` (`id`, `year`, `month`, `week_number`, `went_well`, `improve`, `could_improve`, `next_focus`, `created_at`, `updated_at`)
-  - Plus dedicated `README` and `DATABASE_SCHEMA` data dictionary worksheets with dark navy header styling (`#0F172A`), frozen header row, active data filters, and auto-resized columns.
-- **Live Reflection on Every Mutation**:
-  - Whenever any data is added, checked off, updated, or deleted anywhere on the website (habits, check-in entries, goals, micro-journal entries, mood logs, weekly reviews, weekly plans, affirmations, or categories), the update is **automatically reflected into the user's linked Google Sheet**.
-  - Powered by a debounced background sync (`queueAutoPush`) subscribed to global data mutation events (`api.onDataMutated`), preventing rate limiting while ensuring the Google Sheet stays 100% current.
-- **Header Background Sync Indicator & Non-Blocking Web View (`Header.tsx`, `App.tsx`)**:
-  - The database synchronization runs completely non-blocking in the background, keeping the web view and all UI components 100% interactive at all times.
-  - The desktop action area (`div#root > div > header > div > div > div:nth-of-type(2)`) features:
-    - `↻ Syncing in background...`: Refined emerald badge with spinning loader and animated ping indicator showing quiet background sync without page freeze.
-    - `✓ Sheet Synced` / `Saved ✓`: Live confirmation of persistent storage and cloud sync.
-    - `Google Sheet Live Database Button`: One-click access with live status indicator (`Reflecting to Sheet...`, `Sheet Synced ✓`, or `Sheet Linked`).
-  - All local mutations and database operations respond instantaneously in sub-millisecond time.
-- **Bi-Directional Auto-Reflect & Full Current Data Preservation**:
-  - Automatically pulls changes from the linked Google Sheet every 30 seconds and whenever the browser tab gains focus, applying updates directly into local state and database.
-  - Automatic push (`queueAutoPush`) and manual push pass the entire current client dataset (`fullExportData`), ensuring all active habits, check-ins, mood logs, and vision goals are preserved in both Google Sheets and the website database simultaneously.
-- **Zero False-Lock Authentication**:
-  - Google Sheets configuration (`google_sheets_script_url`, `google_sheets_auto_sync`, `google_sheets_auto_push`, `google_sheets_auto_reflect`) and connection test/sync endpoints bypass the edit password lock, allowing users to configure and test their Google Sheet connection smoothly without entering the editing password `9500`.
+### 🔄 Real-Time Google Sheets Two-Way Relational Sync (All 13 Tables)
+- **100% Relational Schema Parity in Google Sheets**:
+  - The Google Sheets integration supports all 13 database entities:
+    1. `affirmations`
+    2. `daily_journal`
+    3. `goals`
+    4. `habit_categories`
+    5. `habit_entries`
+    6. `habits`
+    7. `mood_tracker`
+    8. `reflections`
+    9. `tasks` (Due dates, priority, status, assigned assignee, notes, follow-up dates)
+    10. `notes` (Second brain, markdown, checklists, tags, pinned, favorite, color)
+    11. `settings`
+    12. `weekly_plans`
+    13. `weekly_reviews`
+  - Plus dedicated `README` data dictionary worksheet with dark navy header styling (`#0F172A`), bold white font, frozen header row 1, active data filters, and auto-resized columns.
+- **Safe Inserts & In-Place Updates (Never Clears Worksheets Unnecessarily)**:
+  - In `merge` mode (default), the Google Apps Script engine matches existing rows by primary key (`id`), updating modified cells in-place and appending new rows to the bottom. Existing historical records from other dates or sessions remain completely intact.
+  - In `replace` mode, the worksheet is cleanly reconstructed with fresh headers and data rows.
+- **Multiline & Unicode Integrity**:
+  - Preserves multiline journal entries, markdown paragraphs, and Unicode emojis (🎯, 🧘, 📚, 🚀, etc.) without string truncation or formatting corruption.
+- **Timestamp Accuracy**:
+  - Last synced (`google_sheets_last_synced`) and last pushed/pulled timestamps are updated **only after verified network and parsing success**.
+- **How to Deploy Google Apps Script Web App**:
+  1. Open a blank Google Sheet (type `sheets.new` in browser).
+  2. Click **Extensions > Apps Script**.
+  3. Replace the entire contents of `Code.gs` with the production script provided in `src/utils/googleAppsScript.ts` (or copy from the **Setup & Code Guide** tab in the Google Sheet modal).
+  4. Click **Deploy > New deployment**.
+  5. Select type **Web app**. Set **Execute as**: `Me` and **Who has access**: `Anyone`.
+  6. Click **Deploy**, copy the URL ending in `/exec`, and paste it into the Web App URL box in the Tracker.
 
 ---
 

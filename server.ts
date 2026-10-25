@@ -5,6 +5,9 @@ import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import * as XLSX from 'xlsx';
+import { buildExcelWorkbook } from './src/utils/excel';
+import { processDataImport, sanitizeErrorMessage } from './src/utils/importEngine';
+import type { OperationTelemetryStats } from './src/types';
 
 dotenv.config();
 
@@ -1981,6 +1984,37 @@ app.get('/api/export', async (req: Request, res: Response) => {
   const format = (req.query.format as string) || 'json';
   const data = getAllApplicationData();
 
+  const totalExportRecords =
+    (data.habits || []).length +
+    (data.habit_entries || []).length +
+    (data.tasks || []).length +
+    (data.daily_journal || []).length +
+    (data.notes || []).length +
+    (data.goals || []).length +
+    (data.reflections || []).length +
+    (data.weekly_reviews || []).length +
+    (data.weekly_plans || []).length +
+    (data.mood_tracker || []).length +
+    (data.affirmations || []).length +
+    (data.categories || []).length;
+
+  const exportTimestamp = new Date().toISOString();
+  localDb.settings.last_backup_time = exportTimestamp;
+  localDb.settings.last_backup_stats = {
+    format,
+    tasks_count: (data.tasks || []).length,
+    tasks_restored: 0,
+    journal_count: (data.daily_journal || []).length,
+    journal_restored: 0,
+    notes_count: (data.notes || []).length,
+    notes_restored: 0,
+    total_records: totalExportRecords,
+    failed_records: 0,
+    success: true,
+    message: `Backup exported successfully (${totalExportRecords} total records)`,
+  };
+  saveDbToFile();
+
   if (format === 'csv') {
     const habitMap = new Map(data.habits.map((h) => [h.id, h.name]));
     let csv = 'Habit ID,Habit Name,Date,Completed,Created At\n';
@@ -1995,156 +2029,7 @@ app.get('/api/export', async (req: Request, res: Response) => {
   }
 
   if (format === 'xlsx' || format === 'excel') {
-    const wb = XLSX.utils.book_new();
-
-    const readmeRows = [
-      {
-        table_no: 0,
-        table_name: '__metadata__',
-        display_name: 'Database Metadata',
-        primary_key: 'schema_version',
-        foreign_keys: 'none',
-        column_count: 7,
-        record_count: 1,
-        description: `Vignesh Habit Tracker Database Backup. Exported at: ${new Date().toISOString()}. Version: v3.0.`,
-        supported_formats: 'Excel .xlsx, CSV, Google Sheets, JSON',
-      },
-      {
-        table_no: 1,
-        table_name: 'affirmations',
-        display_name: 'Affirmations',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 7,
-        record_count: data.affirmations.length,
-        description: 'Stores motivational quotes and images',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 2,
-        table_name: 'daily_journal',
-        display_name: 'Daily Journal',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 7,
-        record_count: data.daily_journal.length,
-        description: 'Stores daily journal entries, moods, and energy levels',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 3,
-        table_name: 'goals',
-        display_name: 'Goals',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 9,
-        record_count: data.goals.length,
-        description: 'Tracks personal goals and their progress',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 4,
-        table_name: 'habit_categories',
-        display_name: 'Habit Categories',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 4,
-        record_count: data.habit_categories.length,
-        description: 'Organizes habits into categories',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 5,
-        table_name: 'habit_entries',
-        display_name: 'Habit Entries',
-        primary_key: 'id',
-        foreign_keys: 'habit_id -> habits.id',
-        column_count: 6,
-        record_count: data.habit_entries.length,
-        description: 'Records whether a habit was completed on a particular date',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 6,
-        table_name: 'habits',
-        display_name: 'Habits',
-        primary_key: 'id',
-        foreign_keys: 'goal_id -> goals.id',
-        column_count: 12,
-        record_count: data.habits.length,
-        description: 'Stores habit details, schedules, priorities, and statuses',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 7,
-        table_name: 'mood_tracker',
-        display_name: 'Mood Tracker',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 8,
-        record_count: data.mood_tracker.length,
-        description: 'Tracks daily moods, mood scores, and energy levels',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 8,
-        table_name: 'reflections',
-        display_name: 'Reflections',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 6,
-        record_count: data.reflections.length,
-        description: 'Stores monthly reflections',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 9,
-        table_name: 'settings',
-        display_name: 'Settings',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 4,
-        record_count: data.settings.length,
-        description: 'Stores application preferences and configuration',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 10,
-        table_name: 'weekly_plans',
-        display_name: 'Weekly Plans',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 11,
-        record_count: data.weekly_plans.length,
-        description: 'Stores weekly goals, priorities, and target completion percentages',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-      {
-        table_no: 11,
-        table_name: 'weekly_reviews',
-        display_name: 'Weekly Reviews',
-        primary_key: 'id',
-        foreign_keys: 'none',
-        column_count: 11,
-        record_count: data.weekly_reviews.length,
-        description: 'Stores weekly reviews and improvement plans',
-        supported_formats: 'Excel .xlsx, Google Sheets, JSON',
-      },
-    ];
-
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(readmeRows), 'README');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.affirmations), 'affirmations');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.daily_journal), 'daily_journal');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.goals), 'goals');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.habit_categories), 'habit_categories');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.habit_entries), 'habit_entries');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.habits), 'habits');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.mood_tracker), 'mood_tracker');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.reflections), 'reflections');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.settings), 'settings');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.weekly_plans), 'weekly_plans');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.weekly_reviews), 'weekly_reviews');
-
+    const wb = buildExcelWorkbook(data as any);
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="vignesh_habit_tracker_${new Date().toISOString().split('T')[0]}.xlsx"`);
@@ -2154,150 +2039,88 @@ app.get('/api/export', async (req: Request, res: Response) => {
   return res.json(data);
 });
 
-// POST /api/import - Import full backup (all tables)
+// POST /api/backup/record-stats - Record verified client-side backup completion
+app.post('/api/backup/record-stats', async (req: Request, res: Response) => {
+  const { stats, timestamp } = req.body || {};
+  const recordTime = timestamp || new Date().toISOString();
+  localDb.settings.last_backup_time = recordTime;
+  if (stats && typeof stats === 'object') {
+    localDb.settings.last_backup_stats = {
+      format: stats.format || 'xlsx',
+      tasks_count: Number(stats.tasks_count || 0),
+      tasks_restored: 0,
+      journal_count: Number(stats.journal_count || 0),
+      journal_restored: 0,
+      notes_count: Number(stats.notes_count || 0),
+      notes_restored: 0,
+      total_records: Number(stats.total_records || 0),
+      failed_records: Number(stats.failed_records || 0),
+      success: stats.success !== false,
+      message: sanitizeErrorMessage(stats.message || 'Backup recorded successfully'),
+    };
+  }
+  saveDbToFile();
+  return res.json({
+    success: true,
+    last_backup_time: localDb.settings.last_backup_time,
+    last_backup_stats: localDb.settings.last_backup_stats,
+  });
+});
+
+// POST /api/import - Transactional & Rollback-capable Import
 app.post('/api/import', async (req: Request, res: Response) => {
+  // Snapshot for atomic rollback
+  const dbSnapshot = JSON.parse(JSON.stringify(localDb));
+
   try {
-    const {
-      habits,
-      habit_entries,
-      goals,
-      mood_tracker,
-      daily_journal,
-      weekly_plans,
-      weekly_reviews,
-      reflections,
-      monthly_reflections,
-      habit_categories,
-      categories,
-      affirmations,
-      settings,
-      mode = 'merge',
-    } = req.body;
+    const result = processDataImport(localDb as any, req.body);
 
-    const cats = Array.isArray(categories) ? categories : (Array.isArray(habit_categories) ? habit_categories : []);
-    const refls = Array.isArray(monthly_reflections) ? monthly_reflections : (Array.isArray(reflections) ? reflections : []);
-
-    if (mode === 'replace') {
-      if (Array.isArray(habits)) localDb.habits = habits;
-      if (Array.isArray(habit_entries)) localDb.habit_entries = habit_entries;
-      if (Array.isArray(goals)) localDb.goals = goals;
-      if (Array.isArray(mood_tracker)) localDb.mood_tracker = mood_tracker;
-      if (Array.isArray(daily_journal)) localDb.daily_journal = daily_journal;
-      if (Array.isArray(weekly_plans)) localDb.weekly_plans = weekly_plans;
-      if (Array.isArray(weekly_reviews)) localDb.weekly_reviews = weekly_reviews;
-      if (Array.isArray(refls)) localDb.reflections = refls;
-      if (Array.isArray(cats) && cats.length > 0) localDb.habit_categories = cats;
-      if (Array.isArray(affirmations) && affirmations.length > 0) localDb.affirmations = affirmations;
-      if (settings && typeof settings === 'object') {
-        localDb.settings = { ...localDb.settings, ...settings };
-      }
-    } else {
-      // Merge mode
-      if (Array.isArray(habits)) {
-        habits.forEach((h: any) => {
-          const idx = localDb.habits.findIndex((item) => item.id === h.id);
-          if (idx >= 0) localDb.habits[idx] = { ...localDb.habits[idx], ...h };
-          else localDb.habits.push(h);
-        });
-      }
-
-      if (Array.isArray(habit_entries)) {
-        habit_entries.forEach((e: any) => {
-          const idx = localDb.habit_entries.findIndex((item) => item.id === e.id || (item.habit_id === e.habit_id && item.date === e.date));
-          if (idx >= 0) localDb.habit_entries[idx] = { ...localDb.habit_entries[idx], ...e };
-          else localDb.habit_entries.push(e);
-        });
-      }
-
-      if (Array.isArray(goals)) {
-        goals.forEach((g: any) => {
-          const idx = localDb.goals.findIndex((item) => item.id === g.id);
-          if (idx >= 0) localDb.goals[idx] = { ...localDb.goals[idx], ...g };
-          else localDb.goals.push(g);
-        });
-      }
-
-      if (Array.isArray(mood_tracker)) {
-        mood_tracker.forEach((m: any) => {
-          const idx = localDb.mood_tracker.findIndex((item) => item.date === m.date || item.id === m.id);
-          if (idx >= 0) localDb.mood_tracker[idx] = { ...localDb.mood_tracker[idx], ...m };
-          else localDb.mood_tracker.push(m);
-        });
-      }
-
-      if (Array.isArray(daily_journal)) {
-        daily_journal.forEach((j: any) => {
-          const idx = localDb.daily_journal.findIndex((item) => item.date === j.date || item.id === j.id);
-          if (idx >= 0) localDb.daily_journal[idx] = { ...localDb.daily_journal[idx], ...j };
-          else localDb.daily_journal.push(j);
-        });
-      }
-
-      if (Array.isArray(weekly_plans)) {
-        weekly_plans.forEach((p: any) => {
-          const idx = localDb.weekly_plans.findIndex((item) => item.id === p.id || (item.year === p.year && item.month === p.month && item.week_number === p.week_number));
-          if (idx >= 0) localDb.weekly_plans[idx] = { ...localDb.weekly_plans[idx], ...p };
-          else localDb.weekly_plans.push(p);
-        });
-      }
-
-      if (Array.isArray(weekly_reviews)) {
-        weekly_reviews.forEach((r: any) => {
-          const idx = localDb.weekly_reviews.findIndex((item) => item.id === r.id || (item.year === r.year && item.month === r.month && item.week_number === r.week_number));
-          if (idx >= 0) localDb.weekly_reviews[idx] = { ...localDb.weekly_reviews[idx], ...r };
-          else localDb.weekly_reviews.push(r);
-        });
-      }
-
-      if (Array.isArray(refls)) {
-        refls.forEach((rf: any) => {
-          const idx = localDb.reflections.findIndex((item) => item.id === rf.id || (item.year === rf.year && item.month === rf.month));
-          if (idx >= 0) localDb.reflections[idx] = { ...localDb.reflections[idx], ...rf };
-          else localDb.reflections.push(rf);
-        });
-      }
-
-      if (Array.isArray(cats) && cats.length > 0) {
-        cats.forEach((c: any) => {
-          const idx = localDb.habit_categories.findIndex((item) => item.id === c.id || item.name.toLowerCase() === c.name.toLowerCase());
-          if (idx >= 0) localDb.habit_categories[idx] = { ...localDb.habit_categories[idx], ...c };
-          else localDb.habit_categories.push(c);
-        });
-      }
-
-      if (Array.isArray(affirmations) && affirmations.length > 0) {
-        affirmations.forEach((a: any) => {
-          const idx = localDb.affirmations.findIndex((item) => item.id === a.id);
-          if (idx >= 0) localDb.affirmations[idx] = { ...localDb.affirmations[idx], ...a };
-          else localDb.affirmations.push(a);
-        });
-      }
-
-      if (settings && typeof settings === 'object') {
-        localDb.settings = { ...localDb.settings, ...settings };
-      }
-    }
-
+    // Atomically commit candidate changes to memory and disk
+    Object.assign(localDb, result.newDb);
+    const timestamp = new Date().toISOString();
+    localDb.settings.last_restore_time = timestamp;
+    localDb.settings.last_restore_stats = {
+      mode: req.body?.mode || 'merge',
+      tasks_count: (result.newDb.tasks || []).length,
+      tasks_restored: result.stats.tasks_restored,
+      journal_count: (result.newDb.daily_journal || []).length,
+      journal_restored: result.stats.journal_restored,
+      notes_count: (result.newDb.notes || []).length,
+      notes_restored: result.stats.notes_restored,
+      total_records: result.stats.total_records,
+      failed_records: 0,
+      success: true,
+      message: result.message,
+    };
     saveDbToFile();
 
     return res.json({
       success: true,
-      message: `Data successfully imported (${mode} mode)`,
-      counts: {
-        habits: Array.isArray(habits) ? habits.length : localDb.habits.length,
-        habit_entries: Array.isArray(habit_entries) ? habit_entries.length : localDb.habit_entries.length,
-        goals: Array.isArray(goals) ? goals.length : localDb.goals.length,
-        mood_tracker: Array.isArray(mood_tracker) ? mood_tracker.length : localDb.mood_tracker.length,
-        daily_journal: Array.isArray(daily_journal) ? daily_journal.length : localDb.daily_journal.length,
-        weekly_plans: Array.isArray(weekly_plans) ? weekly_plans.length : localDb.weekly_plans.length,
-        weekly_reviews: Array.isArray(weekly_reviews) ? weekly_reviews.length : localDb.weekly_reviews.length,
-        reflections: Array.isArray(refls) ? refls.length : localDb.reflections.length,
-        categories: Array.isArray(cats) ? cats.length : localDb.habit_categories.length,
-      },
+      message: result.message,
+      counts: result.counts,
+      stats: localDb.settings.last_restore_stats,
+      timestamp,
     });
   } catch (err: any) {
-    console.error('Error importing data:', err);
-    return res.status(500).json({ error: 'Failed to import data: ' + (err?.message || 'Unknown error') });
+    // Atomic rollback to snapshot - NEVER update last_restore_time on failure
+    Object.assign(localDb, dbSnapshot);
+    const sanitized = sanitizeErrorMessage(err?.message || 'Failed to import data.');
+    localDb.settings.last_restore_stats = {
+      mode: req.body?.mode || 'merge',
+      tasks_count: 0,
+      tasks_restored: 0,
+      journal_count: 0,
+      journal_restored: 0,
+      notes_count: 0,
+      notes_restored: 0,
+      total_records: 0,
+      failed_records: 1,
+      success: false,
+      message: sanitized,
+    };
+    saveDbToFile();
+    console.error('Error importing data (rolled back):', sanitized);
+    return res.status(400).json({ error: sanitized, stats: localDb.settings.last_restore_stats });
   }
 });
 
@@ -2417,6 +2240,35 @@ app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
         });
       }
 
+      if (Array.isArray(data.tasks) && data.tasks.length > 0) {
+        data.tasks.forEach((t: any) => {
+          if (!t) return;
+          const targetId = t.id || crypto.randomUUID();
+          const idx = localDb.tasks.findIndex((item) => item.id === targetId);
+          if (idx >= 0) localDb.tasks[idx] = { ...localDb.tasks[idx], ...t, id: targetId };
+          else localDb.tasks.push({ ...t, id: targetId });
+        });
+      }
+
+      if (Array.isArray(data.notes) && data.notes.length > 0) {
+        data.notes.forEach((n: any) => {
+          if (!n) return;
+          const targetId = n.id || crypto.randomUUID();
+          const idx = localDb.notes.findIndex((item) => item.id === targetId);
+          if (idx >= 0) localDb.notes[idx] = { ...localDb.notes[idx], ...n, id: targetId };
+          else localDb.notes.push({ ...n, id: targetId });
+        });
+      }
+
+      if (Array.isArray(data.affirmations) && data.affirmations.length > 0) {
+        data.affirmations.forEach((a: any) => {
+          if (!a || !a.id) return;
+          const idx = localDb.affirmations.findIndex((item) => item.id === a.id);
+          if (idx >= 0) localDb.affirmations[idx] = { ...localDb.affirmations[idx], ...a };
+          else localDb.affirmations.push(a);
+        });
+      }
+
       saveDbToFile();
     }
 
@@ -2430,6 +2282,24 @@ app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
       redirect: 'follow',
     });
 
+    if (!response.ok) {
+      const sanitized = sanitizeErrorMessage(`Google Apps Script returned HTTP ${response.status}`);
+      localDb.settings.last_push_stats = {
+        tasks_count: (payload.tasks || []).length,
+        tasks_restored: 0,
+        journal_count: (payload.daily_journal || []).length,
+        journal_restored: 0,
+        notes_count: (payload.notes || []).length,
+        notes_restored: 0,
+        total_records: 0,
+        failed_records: 1,
+        success: false,
+        message: sanitized,
+      };
+      saveDbToFile();
+      return res.status(400).json({ success: false, message: sanitized, stats: localDb.settings.last_push_stats });
+    }
+
     const text = await response.text();
     let result: any = {};
     try {
@@ -2438,10 +2308,27 @@ app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
       result = { raw: text };
     }
 
+    if (result && (result.status === 'error' || result.success === false)) {
+      const sanitized = sanitizeErrorMessage(result.message || 'Google Apps Script reported an error');
+      localDb.settings.last_push_stats = {
+        tasks_count: (payload.tasks || []).length,
+        tasks_restored: 0,
+        journal_count: (payload.daily_journal || []).length,
+        journal_restored: 0,
+        notes_count: (payload.notes || []).length,
+        notes_restored: 0,
+        total_records: 0,
+        failed_records: 1,
+        success: false,
+        message: sanitized,
+      };
+      saveDbToFile();
+      return res.status(400).json({ success: false, message: sanitized, stats: localDb.settings.last_push_stats });
+    }
+
+    // Only update push timestamp on verified success - keep strictly separate from pull
     const timestamp = new Date().toISOString();
-    localDb.settings.google_sheets_last_synced = timestamp;
     localDb.settings.google_sheets_last_pushed = timestamp;
-    saveDbToFile();
 
     const summaryCounts = {
       affirmations: localDb.affirmations.length,
@@ -2458,17 +2345,60 @@ app.post('/api/google-sheets/sync', async (req: Request, res: Response) => {
       tasks: (localDb.tasks || []).length,
     };
 
+    const totalPushedRecords =
+      (payload.habits || []).length +
+      (payload.habit_entries || []).length +
+      (payload.tasks || []).length +
+      (payload.daily_journal || []).length +
+      (payload.notes || []).length +
+      (payload.goals || []).length +
+      (payload.reflections || []).length +
+      (payload.weekly_reviews || []).length +
+      (payload.weekly_plans || []).length +
+      (payload.mood_tracker || []).length +
+      (payload.affirmations || []).length +
+      (payload.categories || []).length;
+
+    localDb.settings.last_push_stats = {
+      tasks_count: (payload.tasks || []).length,
+      tasks_restored: 0,
+      journal_count: (payload.daily_journal || []).length,
+      journal_restored: 0,
+      notes_count: (payload.notes || []).length,
+      notes_restored: 0,
+      total_records: totalPushedRecords,
+      failed_records: 0,
+      success: true,
+      message: sanitizeErrorMessage(result.message || 'Successfully synced data to Google Sheets!'),
+    };
+    saveDbToFile();
+
     return res.json({
       success: true,
       message: result.message || 'Successfully synced data to Google Sheets!',
       timestamp,
       summary: result.counts || summaryCounts,
       counts: summaryCounts,
+      stats: localDb.settings.last_push_stats,
       raw: result,
     });
   } catch (err: any) {
     console.error('Error syncing to Google Apps Script:', err);
-    return res.status(500).json({ success: false, message: 'Failed to sync to Google Sheets: ' + (err?.message || 'Network error') });
+    const sanitized = sanitizeErrorMessage('Failed to sync to Google Sheets: ' + (err?.message || 'Network error'));
+    localDb.settings.last_push_stats = {
+      tasks_count: 0,
+      tasks_restored: 0,
+      journal_count: 0,
+      journal_restored: 0,
+      notes_count: 0,
+      notes_restored: 0,
+      total_records: 0,
+      failed_records: 1,
+      success: false,
+      message: sanitized,
+    };
+    saveDbToFile();
+    return res.status(500).json({ success: false, message: sanitized, stats: localDb.settings.last_push_stats });
   }
 });
 
@@ -2488,7 +2418,21 @@ app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
     });
 
     if (!response.ok) {
-      return res.status(400).json({ success: false, message: `Google Apps Script returned HTTP ${response.status}` });
+      const sanitized = sanitizeErrorMessage(`Google Apps Script returned HTTP ${response.status}`);
+      localDb.settings.last_pull_stats = {
+        tasks_count: (localDb.tasks || []).length,
+        tasks_restored: 0,
+        journal_count: (localDb.daily_journal || []).length,
+        journal_restored: 0,
+        notes_count: (localDb.notes || []).length,
+        notes_restored: 0,
+        total_records: 0,
+        failed_records: 1,
+        success: false,
+        message: sanitized,
+      };
+      saveDbToFile();
+      return res.status(400).json({ success: false, message: sanitized, stats: localDb.settings.last_pull_stats });
     }
 
     const text = await response.text();
@@ -2499,8 +2443,26 @@ app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
       data = { raw: text };
     }
 
+    if (data && (data.status === 'error' || data.success === false)) {
+      const sanitized = sanitizeErrorMessage(data.message || 'Google Apps Script reported an error during pull');
+      localDb.settings.last_pull_stats = {
+        tasks_count: (localDb.tasks || []).length,
+        tasks_restored: 0,
+        journal_count: (localDb.daily_journal || []).length,
+        journal_restored: 0,
+        notes_count: (localDb.notes || []).length,
+        notes_restored: 0,
+        total_records: 0,
+        failed_records: 1,
+        success: false,
+        message: sanitized,
+      };
+      saveDbToFile();
+      return res.status(400).json({ success: false, message: sanitized, stats: localDb.settings.last_pull_stats });
+    }
+
+    // Only update pull timestamp on verified successful retrieval - keep strictly separate from push
     const timestamp = new Date().toISOString();
-    localDb.settings.google_sheets_last_synced = timestamp;
     localDb.settings.google_sheets_last_pulled = timestamp;
 
     let importedCounts: any = {};
@@ -2642,16 +2604,46 @@ app.post('/api/google-sheets/pull', async (req: Request, res: Response) => {
       };
     }
 
+    const totalPulledRecords = Object.values(importedCounts).reduce((acc: number, c: any) => acc + (typeof c === 'number' ? c : 0), 0);
+    localDb.settings.last_pull_stats = {
+      tasks_count: (localDb.tasks || []).length,
+      tasks_restored: importedCounts.tasks || 0,
+      journal_count: (localDb.daily_journal || []).length,
+      journal_restored: importedCounts.journal || 0,
+      notes_count: (localDb.notes || []).length,
+      notes_restored: importedCounts.notes || 0,
+      total_records: totalPulledRecords,
+      failed_records: 0,
+      success: true,
+      message: `Successfully loaded data from Google Sheets (${importedCounts.habits || 0} habits, ${importedCounts.tasks || 0} tasks, ${importedCounts.journal || 0} journal entries, ${importedCounts.notes || 0} notes)`,
+    };
+    saveDbToFile();
+
     return res.json({
       success: true,
       data,
       timestamp,
       counts: importedCounts,
-      message: `Successfully loaded data from Google Sheets (${importedCounts.habits || 0} habits, ${importedCounts.entries || 0} check-ins, ${importedCounts.moods || 0} mood logs)`,
+      stats: localDb.settings.last_pull_stats,
+      message: localDb.settings.last_pull_stats.message,
     });
   } catch (err: any) {
     console.error('Error pulling from Google Apps Script:', err);
-    return res.status(500).json({ success: false, message: 'Failed to pull from Google Sheets: ' + (err?.message || 'Network error') });
+    const sanitized = sanitizeErrorMessage('Failed to pull from Google Sheets: ' + (err?.message || 'Network error'));
+    localDb.settings.last_pull_stats = {
+      tasks_count: 0,
+      tasks_restored: 0,
+      journal_count: 0,
+      journal_restored: 0,
+      notes_count: 0,
+      notes_restored: 0,
+      total_records: 0,
+      failed_records: 1,
+      success: false,
+      message: sanitized,
+    };
+    saveDbToFile();
+    return res.status(500).json({ success: false, message: sanitized, stats: localDb.settings.last_pull_stats });
   }
 });
 

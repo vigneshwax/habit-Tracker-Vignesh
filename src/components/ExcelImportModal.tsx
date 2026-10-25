@@ -37,6 +37,7 @@ import {
 } from '../utils/excel';
 import { api, EDIT_PASSWORD } from '../api';
 import { useProtectedAction } from '../context/ProtectedActionContext';
+import { localStorageService } from '../services/localStorageService';
 
 interface ExcelImportModalProps {
   isOpen: boolean;
@@ -59,6 +60,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   // Import Modes: 'merge' | 'replace' | 'selected'
   const [importMode, setImportMode] = useState<'merge' | 'replace' | 'selected'>('merge');
   const [selectedTablesToImport, setSelectedTablesToImport] = useState<Record<string, boolean>>({});
+  const [confirmReplace, setConfirmReplace] = useState(false);
 
   const [activePreviewTab, setActivePreviewTab] = useState<string>('habits');
   const [showOnlyIssues, setShowOnlyIssues] = useState(false);
@@ -185,25 +187,74 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         // Filter payload based on mode
         let payload: any = { ...summary.parsedData };
 
-        if (importMode === 'selected') {
-          payload = {
-            habits: selectedTablesToImport.habits ? summary.parsedData.habits : [],
-            habit_entries: selectedTablesToImport.habit_entries ? summary.parsedData.habit_entries : [],
-            goals: selectedTablesToImport.goals ? summary.parsedData.goals : [],
-            mood_tracker: selectedTablesToImport.mood_tracker ? summary.parsedData.mood_tracker : [],
-            daily_journal: selectedTablesToImport.daily_journal ? summary.parsedData.daily_journal : [],
-            weekly_plans: selectedTablesToImport.weekly_plans ? summary.parsedData.weekly_plans : [],
-            weekly_reviews: selectedTablesToImport.weekly_reviews ? summary.parsedData.weekly_reviews : [],
-            reflections: selectedTablesToImport.monthly_reflections ? summary.parsedData.reflections : [],
-            habit_categories: selectedTablesToImport.categories ? summary.parsedData.habit_categories : [],
-            settings: selectedTablesToImport.settings ? summary.parsedData.settings : {},
-            mode: 'merge',
-          };
+        if (importMode === 'replace') {
+          if (!confirmReplace) {
+            setParseError('Destructive action required: please confirm replacing your data.');
+            return;
+          }
+          payload.mode = 'replace';
+          payload.confirm_replace = true;
+        } else if (importMode === 'selected') {
+          const chosen = Object.keys(selectedTablesToImport).filter((k) => selectedTablesToImport[k]);
+          payload = { mode: 'selected', selected_tables: chosen };
+          if (selectedTablesToImport.habits) payload.habits = summary.parsedData.habits;
+          if (selectedTablesToImport.habit_entries) payload.habit_entries = summary.parsedData.habit_entries;
+          if (selectedTablesToImport.goals) payload.goals = summary.parsedData.goals;
+          if (selectedTablesToImport.mood_tracker) payload.mood_tracker = summary.parsedData.mood_tracker;
+          if (selectedTablesToImport.daily_journal) payload.daily_journal = summary.parsedData.daily_journal;
+          if (selectedTablesToImport.weekly_plans) payload.weekly_plans = summary.parsedData.weekly_plans;
+          if (selectedTablesToImport.weekly_reviews) payload.weekly_reviews = summary.parsedData.weekly_reviews;
+          if (selectedTablesToImport.reflections || selectedTablesToImport.monthly_reflections) payload.reflections = summary.parsedData.reflections;
+          if (selectedTablesToImport.habit_categories || selectedTablesToImport.categories) payload.habit_categories = summary.parsedData.habit_categories;
+          if (selectedTablesToImport.affirmations) payload.affirmations = summary.parsedData.affirmations;
+          if (selectedTablesToImport.tasks) payload.tasks = summary.parsedData.tasks;
+          if (selectedTablesToImport.notes) payload.notes = summary.parsedData.notes;
+          if (selectedTablesToImport.settings) payload.settings = summary.parsedData.settings;
         } else {
-          payload.mode = importMode;
+          payload.mode = 'merge';
         }
 
         const res = await api.importData(payload);
+
+        // Also persist imported tasks and notes in client storage
+        if (payload.tasks && Array.isArray(payload.tasks) && payload.tasks.length > 0) {
+          try {
+            if (importMode === 'replace') {
+              localStorageService.saveTasks(payload.tasks);
+            } else {
+              const existing = localStorageService.getTasks();
+              const merged = [...existing];
+              payload.tasks.forEach((t: any) => {
+                const idx = merged.findIndex((m) => m.id === t.id);
+                if (idx >= 0) merged[idx] = { ...merged[idx], ...t };
+                else merged.push(t);
+              });
+              localStorageService.saveTasks(merged);
+            }
+          } catch (e) {
+            console.warn('Could not sync tasks to localStorage:', e);
+          }
+        }
+
+        if (payload.notes && Array.isArray(payload.notes) && payload.notes.length > 0) {
+          try {
+            if (importMode === 'replace') {
+              localStorageService.saveNotes(payload.notes);
+            } else {
+              const existing = localStorageService.getNotes();
+              const merged = [...existing];
+              payload.notes.forEach((n: any) => {
+                const idx = merged.findIndex((m) => m.id === n.id);
+                if (idx >= 0) merged[idx] = { ...merged[idx], ...n };
+                else merged.push(n);
+              });
+              localStorageService.saveNotes(merged);
+            }
+          } catch (e) {
+            console.warn('Could not sync notes to localStorage:', e);
+          }
+        }
+
         setImportSuccess(true);
         setImportResultCounts(res.counts || {});
 
@@ -241,6 +292,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     setParseError('');
     setImportSuccess(false);
     setPasswordError('');
+    setConfirmReplace(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -516,6 +568,38 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </div>
               </div>
 
+              {/* Replace Mode Destructive Confirmation Banner */}
+              {importMode === 'replace' && (
+                <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 flex items-start gap-3 animate-in fade-in duration-200">
+                  <ShieldAlert className="w-5 h-5 shrink-0 text-rose-600 mt-0.5" />
+                  <div className="space-y-2 flex-1">
+                    <div>
+                      <h5 className="font-bold text-xs text-rose-950 dark:text-rose-100 flex items-center gap-1.5">
+                        <span>Destructive Action Confirmation Required</span>
+                        <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 rounded bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-200">
+                          Replace Mode
+                        </span>
+                      </h5>
+                      <p className="text-[11px] text-rose-800 dark:text-rose-300 mt-0.5 leading-relaxed">
+                        Replace mode replaces current records for the worksheets included in this workbook. Tables not in this file will be preserved. This operation cannot be automatically undone.
+                      </p>
+                    </div>
+
+                    <label className="flex items-center gap-2.5 p-2 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-rose-200 dark:border-rose-800 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={confirmReplace}
+                        onChange={(e) => setConfirmReplace(e.target.checked)}
+                        className="rounded text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="text-xs font-semibold text-rose-900 dark:text-rose-200">
+                        I understand this is destructive and confirm replacing existing records for these worksheets.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {/* Dependency Warning */}
               {dependencyWarnings.length > 0 && (
                 <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
@@ -694,6 +778,36 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                           </div>
                         ))
                       )}
+
+                      {activePreviewTab === 'tasks' && (
+                        (summary.parsedData.tasks || []).slice(0, 6).map((t: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between text-[11px] p-2 bg-[#FAF8F5] dark:bg-slate-900 rounded-xl border border-[#ECE6DC] dark:border-slate-800">
+                            <span className="font-semibold text-[#2D2A26] dark:text-white truncate max-w-[180px]">{t.title || t.name}</span>
+                            <span className="text-[#7D766C] dark:text-slate-400 capitalize">{t.category || 'general'} • {t.priority || 'Medium'}</span>
+                            <span className="font-mono text-[10px] text-slate-500">{t.date || t.due_date || 'No due date'}</span>
+                            <span className="px-1.5 py-0.2 rounded bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 text-[10px] uppercase font-semibold">{t.status || (t.completed ? 'Completed' : 'Pending')}</span>
+                          </div>
+                        ))
+                      )}
+
+                      {activePreviewTab === 'notes' && (
+                        (summary.parsedData.notes || []).slice(0, 6).map((n: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between text-[11px] p-2 bg-[#FAF8F5] dark:bg-slate-900 rounded-xl border border-[#ECE6DC] dark:border-slate-800">
+                            <span className="font-semibold text-[#2D2A26] dark:text-white truncate max-w-[180px]">{n.title}</span>
+                            <span className="text-[#7D766C] dark:text-slate-400 truncate max-w-[200px]">{n.content || (n.checklist ? `${n.checklist.length} items` : 'Empty note')}</span>
+                            <span className="font-mono text-[10px] text-slate-500">Type: {n.type || 'note'}</span>
+                          </div>
+                        ))
+                      )}
+
+                      {activePreviewTab === 'affirmations' && (
+                        (summary.parsedData.affirmations || []).slice(0, 5).map((a: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between text-[11px] p-2 bg-[#FAF8F5] dark:bg-slate-900 rounded-xl border border-[#ECE6DC] dark:border-slate-800">
+                            <span className="font-medium italic text-[#2D2A26] dark:text-white truncate max-w-[280px]">"{a.quote}"</span>
+                            <span className="text-[#7D766C] dark:text-slate-400">— {a.author || 'Anonymous'}</span>
+                          </div>
+                        ))
+                      )}
                     </div>
                   )}
                 </div>
@@ -758,7 +872,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <button
               type="button"
               onClick={handlePerformImport}
-              disabled={isImporting || importSuccess || summary.validRowsCount === 0}
+              disabled={isImporting || importSuccess || summary.validRowsCount === 0 || (importMode === 'replace' && !confirmReplace)}
               className="inline-flex items-center gap-2 py-2.5 px-5 rounded-xl bg-[#5B8266] hover:bg-[#4E7057] text-white text-xs font-semibold shadow-2xs transition-all cursor-pointer disabled:opacity-50"
             >
               {isImporting ? (

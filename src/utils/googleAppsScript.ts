@@ -68,7 +68,7 @@ function doGet(e) {
     return ContentService.createTextOutput(JSON.stringify({
       status: 'success',
       version: SCHEMA_VERSION,
-      tables: ['README', 'affirmations', 'daily_journal', 'goals', 'habit_categories', 'habit_entries', 'habits', 'mood_tracker', 'reflections', 'settings', 'weekly_plans', 'weekly_reviews']
+      tables: ['README', 'affirmations', 'daily_journal', 'goals', 'habit_categories', 'habit_entries', 'habits', 'mood_tracker', 'reflections', 'settings', 'weekly_plans', 'weekly_reviews', 'tasks', 'notes']
     })).setMimeType(ContentService.MimeType.JSON);
   }
 
@@ -111,6 +111,7 @@ function syncDataToSheets(ss, data) {
   var selectedTables = Array.isArray(data.selected_tables) && data.selected_tables.length > 0
     ? data.selected_tables
     : null;
+  var mode = data.mode || 'merge';
 
   function shouldSync(name) {
     return !selectedTables || selectedTables.indexOf(name) >= 0;
@@ -131,9 +132,11 @@ function syncDataToSheets(ss, data) {
       [8, 'reflections', 'Reflections', 'id', 'none', 'id, month, year, content, created_at, updated_at', 'Stores monthly reflections'],
       [9, 'settings', 'Settings', 'id', 'none', 'id, setting_key, setting_value, updated_at', 'Stores application preferences and configuration'],
       [10, 'weekly_plans', 'Weekly Plans', 'id', 'none', 'id, year, month, week_number, main_goal, priority_1, priority_2, priority_3, target_percentage, created_at, updated_at', 'Stores weekly goals, priorities, and target completion percentages'],
-      [11, 'weekly_reviews', 'Weekly Reviews', 'id', 'none', 'id, year, month, week_number, went_well, improve, could_improve, next_focus, created_at, updated_at', 'Stores weekly reviews and improvement plans']
+      [11, 'weekly_reviews', 'Weekly Reviews', 'id', 'none', 'id, year, month, week_number, went_well, improve, could_improve, next_focus, created_at, updated_at', 'Stores weekly reviews and improvement plans'],
+      [12, 'tasks', 'Tasks', 'id', 'none', 'id, date, time, title, description, category, priority, status, assigned_to, notes, follow_up_date, created_at, updated_at', 'Stores personal tasks, assignments, priorities, and follow-ups'],
+      [13, 'notes', 'Notes & Second Brain', 'id', 'none', 'id, title, content, type, category, checklist, tags, pinned, favorite, color, created_at, updated_at', 'Stores digital second brain notes, knowledge records, and checklists']
     ];
-    writeRelationalSheet(ss, 'README', readmeHeaders, readmeRows, '#1E293B');
+    writeRelationalSheet(ss, 'README', readmeHeaders, readmeRows, '#1E293B', 'replace');
   }
 
   // 2. affirmations Worksheet
@@ -152,11 +155,11 @@ function syncDataToSheets(ss, data) {
         a.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'affirmations', affHeaders, affRows, '#0F172A');
+    writeRelationalSheet(ss, 'affirmations', affHeaders, affRows, '#0F172A', mode);
     summary.affirmations = affRows.length;
   }
 
-  // 2. habits Worksheet
+  // 3. habits Worksheet
   if (shouldSync('habits') && Array.isArray(data.habits)) {
     var habitHeaders = ['id', 'name', 'category', 'frequency', 'priority', 'goal_id', 'target_count', 'schedule_days', 'status', 'archived_at', 'created_at', 'updated_at'];
     var habitRows = data.habits.map(function(h) {
@@ -175,11 +178,11 @@ function syncDataToSheets(ss, data) {
         h.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'habits', habitHeaders, habitRows, '#0F172A');
+    writeRelationalSheet(ss, 'habits', habitHeaders, habitRows, '#0F172A', mode);
     summary.habits = habitRows.length;
   }
 
-  // 3. habit_entries Worksheet
+  // 4. habit_entries Worksheet
   if (shouldSync('habit_entries') && Array.isArray(data.habit_entries)) {
     var entryHeaders = ['id', 'habit_id', 'date', 'completed', 'created_at', 'updated_at'];
     var entryRows = data.habit_entries.map(function(e) {
@@ -193,11 +196,11 @@ function syncDataToSheets(ss, data) {
         e.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'habit_entries', entryHeaders, entryRows, '#0F172A');
+    writeRelationalSheet(ss, 'habit_entries', entryHeaders, entryRows, '#0F172A', mode);
     summary.habit_entries = entryRows.length;
   }
 
-  // 4. habit_categories Worksheet
+  // 5. habit_categories Worksheet
   if (shouldSync('habit_categories') || shouldSync('categories')) {
     var cats = Array.isArray(data.habit_categories) ? data.habit_categories : (Array.isArray(data.categories) ? data.categories : []);
     var catHeaders = ['id', 'name', 'icon', 'created_at'];
@@ -209,12 +212,12 @@ function syncDataToSheets(ss, data) {
         c.created_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'habit_categories', catHeaders, catRows, '#0F172A');
+    writeRelationalSheet(ss, 'habit_categories', catHeaders, catRows, '#0F172A', mode);
     summary.habit_categories = catRows.length;
     summary.categories = catRows.length;
   }
 
-  // 5. goals Worksheet
+  // 6. goals Worksheet
   if (shouldSync('goals') && Array.isArray(data.goals)) {
     var goalHeaders = ['id', 'title', 'description', 'category', 'target_date', 'progress', 'status', 'created_at', 'updated_at'];
     var goalRows = data.goals.map(function(g) {
@@ -230,11 +233,11 @@ function syncDataToSheets(ss, data) {
         g.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'goals', goalHeaders, goalRows, '#0F172A');
+    writeRelationalSheet(ss, 'goals', goalHeaders, goalRows, '#0F172A', mode);
     summary.goals = goalRows.length;
   }
 
-  // 6. mood_tracker Worksheet
+  // 7. mood_tracker Worksheet
   if (shouldSync('mood_tracker') && Array.isArray(data.mood_tracker)) {
     var moodHeaders = ['id', 'date', 'mood', 'mood_score', 'energy_level', 'note', 'created_at', 'updated_at'];
     var moodRows = data.mood_tracker.map(function(m) {
@@ -249,11 +252,11 @@ function syncDataToSheets(ss, data) {
         m.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'mood_tracker', moodHeaders, moodRows, '#0F172A');
+    writeRelationalSheet(ss, 'mood_tracker', moodHeaders, moodRows, '#0F172A', mode);
     summary.mood_tracker = moodRows.length;
   }
 
-  // 7. daily_journal Worksheet
+  // 8. daily_journal Worksheet
   if (shouldSync('daily_journal') && Array.isArray(data.daily_journal)) {
     var journalHeaders = ['id', 'date', 'content', 'mood', 'energy_level', 'created_at', 'updated_at'];
     var journalRows = data.daily_journal.map(function(j) {
@@ -267,11 +270,11 @@ function syncDataToSheets(ss, data) {
         j.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'daily_journal', journalHeaders, journalRows, '#0F172A');
+    writeRelationalSheet(ss, 'daily_journal', journalHeaders, journalRows, '#0F172A', mode);
     summary.daily_journal = journalRows.length;
   }
 
-  // 8. weekly_plans Worksheet
+  // 9. weekly_plans Worksheet
   if (shouldSync('weekly_plans') && Array.isArray(data.weekly_plans)) {
     var planHeaders = ['id', 'year', 'month', 'week_number', 'main_goal', 'priority_1', 'priority_2', 'priority_3', 'target_percentage', 'created_at', 'updated_at'];
     var planRows = data.weekly_plans.map(function(p) {
@@ -289,11 +292,11 @@ function syncDataToSheets(ss, data) {
         p.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'weekly_plans', planHeaders, planRows, '#0F172A');
+    writeRelationalSheet(ss, 'weekly_plans', planHeaders, planRows, '#0F172A', mode);
     summary.weekly_plans = planRows.length;
   }
 
-  // 9. weekly_reviews Worksheet
+  // 10. weekly_reviews Worksheet
   if (shouldSync('weekly_reviews') && Array.isArray(data.weekly_reviews)) {
     var reviewHeaders = ['id', 'year', 'month', 'week_number', 'went_well', 'improve', 'could_improve', 'next_focus', 'created_at', 'updated_at'];
     var reviewRows = data.weekly_reviews.map(function(r) {
@@ -310,11 +313,11 @@ function syncDataToSheets(ss, data) {
         r.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'weekly_reviews', reviewHeaders, reviewRows, '#0F172A');
+    writeRelationalSheet(ss, 'weekly_reviews', reviewHeaders, reviewRows, '#0F172A', mode);
     summary.weekly_reviews = reviewRows.length;
   }
 
-  // 10. reflections Worksheet
+  // 11. reflections Worksheet
   if (shouldSync('reflections') || shouldSync('monthly_reflections')) {
     var refls = Array.isArray(data.reflections) ? data.reflections : (Array.isArray(data.monthly_reflections) ? data.monthly_reflections : []);
     var reflHeaders = ['id', 'month', 'year', 'content', 'created_at', 'updated_at'];
@@ -328,12 +331,63 @@ function syncDataToSheets(ss, data) {
         rf.updated_at || ''
       ];
     });
-    writeRelationalSheet(ss, 'reflections', reflHeaders, reflRows, '#0F172A');
+    writeRelationalSheet(ss, 'reflections', reflHeaders, reflRows, '#0F172A', mode);
     summary.reflections = reflRows.length;
     summary.monthly_reflections = reflRows.length;
   }
 
-  // 11. settings Worksheet
+  // 12. tasks Worksheet
+  if (shouldSync('tasks') && Array.isArray(data.tasks)) {
+    var taskHeaders = ['id', 'date', 'time', 'title', 'description', 'category', 'priority', 'status', 'assigned_to', 'notes', 'follow_up_date', 'created_at', 'updated_at'];
+    var taskRows = data.tasks.map(function(t) {
+      return [
+        t.id || '',
+        formatDateStr(t.date || t.due_date),
+        t.time || '',
+        t.title || t.name || '',
+        t.description || '',
+        t.category || 'general',
+        t.priority || 'Medium',
+        t.status || (t.completed ? 'Completed' : 'Pending'),
+        t.assigned_to || t.assignedTo || 'Vignesh',
+        t.notes || '',
+        formatDateStr(t.follow_up_date || t.followUpDate),
+        t.created_at || '',
+        t.updated_at || ''
+      ];
+    });
+    writeRelationalSheet(ss, 'tasks', taskHeaders, taskRows, '#0F172A', mode);
+    summary.tasks = taskRows.length;
+  }
+
+  // 13. notes Worksheet
+  if (shouldSync('notes') && Array.isArray(data.notes)) {
+    var noteHeaders = ['id', 'title', 'content', 'type', 'category', 'checklist', 'tags', 'pinned', 'favorite', 'color', 'created_at', 'updated_at'];
+    var noteRows = data.notes.map(function(n) {
+      var isPinned = n.pinned === true || String(n.pinned).toUpperCase() === 'TRUE';
+      var isFavorite = n.favorite === true || String(n.favorite).toUpperCase() === 'TRUE';
+      var checklistStr = typeof n.checklist === 'object' ? JSON.stringify(n.checklist) : String(n.checklist || '');
+      var tagsStr = Array.isArray(n.tags) ? n.tags.join(', ') : String(n.tags || '');
+      return [
+        n.id || '',
+        n.title || '',
+        n.content || '',
+        n.type || 'text',
+        n.category || 'Daily Journal',
+        checklistStr,
+        tagsStr,
+        isPinned ? 'TRUE' : 'FALSE',
+        isFavorite ? 'TRUE' : 'FALSE',
+        n.color || '',
+        n.created_at || '',
+        n.updated_at || ''
+      ];
+    });
+    writeRelationalSheet(ss, 'notes', noteHeaders, noteRows, '#0F172A', mode);
+    summary.notes = noteRows.length;
+  }
+
+  // 14. settings Worksheet
   if (shouldSync('settings') && data.settings) {
     var setHeaders = ['id', 'setting_key', 'setting_value', 'updated_at'];
     var setRows = [];
@@ -349,17 +403,17 @@ function syncDataToSheets(ss, data) {
         setRows.push(['', k, valStr, new Date().toISOString()]);
       });
     }
-    writeRelationalSheet(ss, 'settings', setHeaders, setRows, '#0F172A');
+    writeRelationalSheet(ss, 'settings', setHeaders, setRows, '#0F172A', mode);
     summary.settings = setRows.length;
   }
 
   return summary;
 }
 
-function writeRelationalSheet(ss, sheetName, headers, rows, headerColor) {
+function writeRelationalSheet(ss, sheetName, headers, rows, headerColor, mode) {
   var sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
-    // Also check case-insensitive match to avoid duplicate tabs
+    // Check case-insensitive match to avoid duplicate tabs
     var existingSheets = ss.getSheets();
     for (var i = 0; i < existingSheets.length; i++) {
       if (existingSheets[i].getName().toLowerCase() === sheetName.toLowerCase()) {
@@ -372,44 +426,129 @@ function writeRelationalSheet(ss, sheetName, headers, rows, headerColor) {
     }
   }
 
-  // Clear existing data and formatting cleanly
-  sheet.clear();
+  var isReplace = mode === 'replace' || sheetName === 'README';
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
 
-  // 1. Write Header Row
-  var headerRange = sheet.getRange(1, 1, 1, headers.length);
-  headerRange.setValues([headers]);
-  headerRange.setBackground(headerColor || '#0F172A');
-  headerRange.setFontColor('#FFFFFF');
-  headerRange.setFontWeight('bold');
-  headerRange.setFontFamily('Arial');
-  headerRange.setFontSize(10);
-  sheet.setRowHeight(1, 32);
+  if (isReplace || lastRow < 1 || lastCol < 1) {
+    // Clean rewrite for replace mode or blank new sheet
+    sheet.clear();
 
-  // 2. Freeze the Header Row
-  sheet.setFrozenRows(1);
+    // 1. Write Header Row
+    var headerRange = sheet.getRange(1, 1, 1, headers.length);
+    headerRange.setValues([headers]);
+    headerRange.setBackground(headerColor || '#0F172A');
+    headerRange.setFontColor('#FFFFFF');
+    headerRange.setFontWeight('bold');
+    headerRange.setFontFamily('Arial');
+    headerRange.setFontSize(10);
+    sheet.setRowHeight(1, 32);
 
-  // 3. Write Data Rows
-  if (rows && rows.length > 0) {
-    var dataRange = sheet.getRange(2, 1, rows.length, headers.length);
-    dataRange.setValues(rows);
-    dataRange.setFontFamily('Arial');
-    dataRange.setFontSize(10);
-  }
+    // 2. Freeze the Header Row
+    sheet.setFrozenRows(1);
 
-  // 4. Safely create Filter
-  try {
-    var oldFilter = sheet.getFilter();
-    if (oldFilter) oldFilter.remove();
-    var filterRowCount = Math.max(rows ? rows.length + 1 : 1, 1);
-    var filterRange = sheet.getRange(1, 1, filterRowCount, headers.length);
-    filterRange.createFilter();
-  } catch (err) {
-    // Ignore filter creation errors on empty ranges
-  }
+    // 3. Write Data Rows
+    if (rows && rows.length > 0) {
+      var dataRange = sheet.getRange(2, 1, rows.length, headers.length);
+      dataRange.setValues(rows);
+      dataRange.setFontFamily('Arial');
+      dataRange.setFontSize(10);
+    }
 
-  // 5. Auto-Resize Columns
-  for (var col = 1; col <= headers.length; col++) {
-    sheet.autoResizeColumn(col);
+    // 4. Safely create Filter
+    try {
+      var oldFilter = sheet.getFilter();
+      if (oldFilter) oldFilter.remove();
+      var filterRowCount = Math.max(rows ? rows.length + 1 : 1, 1);
+      sheet.getRange(1, 1, filterRowCount, headers.length).createFilter();
+    } catch (err) {}
+
+    // 5. Auto-Resize Columns
+    for (var col = 1; col <= headers.length; col++) {
+      sheet.autoResizeColumn(col);
+    }
+  } else {
+    // MERGE / INCREMENTAL UPDATE: Safe inserts and updates by stable ID
+    var existingData = sheet.getDataRange().getValues();
+    var existingHeaders = existingData[0].map(function(h) {
+      return String(h).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    });
+
+    var idColIdx = existingHeaders.indexOf('id');
+    if (idColIdx === -1 && sheetName === 'settings') {
+      idColIdx = existingHeaders.indexOf('settingkey');
+      if (idColIdx === -1) idColIdx = existingHeaders.indexOf('setting_key');
+    }
+
+    if (idColIdx === -1) {
+      // If header is missing an id column, write canonical headers
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      existingHeaders = headers.map(function(h) {
+        return String(h).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      });
+      idColIdx = 0;
+    }
+
+    var idToRowIdx = {};
+    for (var r = 1; r < existingData.length; r++) {
+      var existingId = String(existingData[r][idColIdx] || '').trim();
+      if (existingId) {
+        idToRowIdx[existingId] = r + 1;
+      }
+    }
+
+    var colMap = headers.map(function(h) {
+      var clean = String(h).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      var idx = existingHeaders.indexOf(clean);
+      return idx >= 0 ? idx + 1 : 0;
+    });
+
+    var rowsToAppend = [];
+    if (rows && rows.length > 0) {
+      for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
+        var recordId = String(row[0] || '').trim();
+        if (recordId && idToRowIdx[recordId]) {
+          var targetSheetRow = idToRowIdx[recordId];
+          for (var c = 0; c < row.length; c++) {
+            var targetSheetCol = colMap[c];
+            if (targetSheetCol > 0) {
+              sheet.getRange(targetSheetRow, targetSheetCol).setValue(row[c]);
+            }
+          }
+        } else {
+          var newRowArray = [];
+          for (var ec = 0; ec < existingHeaders.length; ec++) {
+            newRowArray.push('');
+          }
+          for (var c = 0; c < row.length; c++) {
+            var targetSheetCol = colMap[c];
+            if (targetSheetCol > 0) {
+              newRowArray[targetSheetCol - 1] = row[c];
+            }
+          }
+          rowsToAppend.push(newRowArray);
+        }
+      }
+
+      if (rowsToAppend.length > 0) {
+        var startAppendRow = sheet.getLastRow() + 1;
+        var appendRange = sheet.getRange(startAppendRow, 1, rowsToAppend.length, existingHeaders.length);
+        appendRange.setValues(rowsToAppend);
+        appendRange.setFontFamily('Arial');
+        appendRange.setFontSize(10);
+      }
+    }
+
+    try {
+      var oldFilter = sheet.getFilter();
+      if (oldFilter) oldFilter.remove();
+      sheet.getRange(1, 1, sheet.getLastRow(), existingHeaders.length).createFilter();
+    } catch (err) {}
+
+    for (var col = 1; col <= Math.min(existingHeaders.length, 15); col++) {
+      sheet.autoResizeColumn(col);
+    }
   }
 }
 
@@ -545,6 +684,65 @@ function exportAllData() {
         month: Number(r.month || 1),
         year: Number(r.year || new Date().getFullYear()),
         content: r.content || '',
+        created_at: r.createdat || r.created_at || '',
+        updated_at: r.updatedat || r.updated_at || ''
+      };
+    }),
+    tasks: parseRelationalSheet(findSheet(['tasks', 'Tasks']), function(r) {
+      var stat = r.status || 'Pending';
+      var comp = String(r.completed || '').toUpperCase();
+      var isCompleted = comp === 'TRUE' || comp === '1' || String(stat).toLowerCase() === 'completed';
+      return {
+        id: r.id || '',
+        date: formatDateStr(r.date || r.duedate),
+        time: r.time || '',
+        title: r.title || r.name || '',
+        name: r.title || r.name || '',
+        description: r.description || '',
+        category: (r.category || 'general').toLowerCase(),
+        priority: r.priority || 'Medium',
+        status: isCompleted ? 'Completed' : stat,
+        completed: isCompleted,
+        assigned_to: r.assignedto || r.assigned_to || 'Vignesh',
+        notes: r.notes || '',
+        follow_up_date: formatDateStr(r.followupdate || r.follow_up_date),
+        created_at: r.createdat || r.created_at || '',
+        updated_at: r.updatedat || r.updated_at || ''
+      };
+    }),
+    notes: parseRelationalSheet(findSheet(['notes', 'Notes', 'Notes & Second Brain', 'Second Brain']), function(r) {
+      var pin = String(r.pinned || '').toUpperCase();
+      var fav = String(r.favorite || '').toUpperCase();
+      var tagsVal = r.tags;
+      var parsedTags = [];
+      if (Array.isArray(tagsVal)) {
+        parsedTags = tagsVal;
+      } else if (typeof tagsVal === 'string' && tagsVal.trim()) {
+        try {
+          var parsedJson = JSON.parse(tagsVal);
+          if (Array.isArray(parsedJson)) parsedTags = parsedJson;
+          else parsedTags = tagsVal.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+        } catch(e) {
+          parsedTags = tagsVal.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+        }
+      }
+      var checklistVal = r.checklist;
+      try {
+        if (typeof checklistVal === 'string' && (checklistVal.startsWith('{') || checklistVal.startsWith('['))) {
+          checklistVal = JSON.parse(checklistVal);
+        }
+      } catch(e) {}
+      return {
+        id: r.id || '',
+        title: r.title || '',
+        content: r.content || '',
+        type: (r.type || 'text').toLowerCase(),
+        category: r.category || 'Daily Journal',
+        checklist: checklistVal,
+        tags: parsedTags,
+        pinned: pin === 'TRUE' || pin === '1',
+        favorite: fav === 'TRUE' || fav === '1',
+        color: r.color || '',
         created_at: r.createdat || r.created_at || '',
         updated_at: r.updatedat || r.updated_at || ''
       };
@@ -757,6 +955,9 @@ export async function pullRelationalDataFromGoogleSheets(scriptUrl: string): Pro
     weekly_plans: Array.isArray(rawData.weekly_plans) ? rawData.weekly_plans : [],
     weekly_reviews: Array.isArray(rawData.weekly_reviews) ? rawData.weekly_reviews : [],
     reflections: Array.isArray(rawData.monthly_reflections) ? rawData.monthly_reflections : (Array.isArray(rawData.reflections) ? rawData.reflections : []),
+    tasks: Array.isArray(rawData.tasks) ? rawData.tasks : [],
+    notes: Array.isArray(rawData.notes) ? rawData.notes : [],
+    affirmations: Array.isArray(rawData.affirmations) ? rawData.affirmations : [],
     settings: rawData.settings || {},
   };
 
@@ -764,7 +965,7 @@ export async function pullRelationalDataFromGoogleSheets(scriptUrl: string): Pro
     success: true,
     data: normalizedData,
     validation,
-    message: `Loaded ${validation.counts.habits} habits, ${validation.counts.habit_entries} entries, ${validation.counts.mood_tracker} mood logs from Google Sheets`,
+    message: `Loaded ${validation.counts.habits} habits, ${validation.counts.tasks || 0} tasks, ${validation.counts.notes || 0} notes, ${validation.counts.habit_entries} entries from Google Sheets`,
   };
 }
 

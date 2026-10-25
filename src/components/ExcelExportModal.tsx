@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileSpreadsheet,
   Download,
@@ -26,6 +26,8 @@ import {
   downloadExcelWorkbook,
   downloadExcelTemplate,
 } from '../utils/excel';
+import { localStorageService } from '../services/localStorageService';
+import { api } from '../api';
 
 interface ExcelExportModalProps {
   isOpen: boolean;
@@ -39,6 +41,8 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
   exportData,
 }) => {
   const [exportMode, setExportMode] = useState<'all' | 'custom' | 'schema'>('all');
+  const [activeExportData, setActiveExportData] = useState<FullExportData>(exportData);
+  const [isLoadingFullData, setIsLoadingFullData] = useState(false);
   const [selectedTables, setSelectedTables] = useState<Record<SupportedTableName, boolean>>({
     affirmations: true,
     daily_journal: true,
@@ -58,6 +62,51 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
   });
   const [isExporting, setIsExporting] = useState(false);
   const [exportedFilename, setExportedFilename] = useState<string | null>(null);
+
+  // Fetch complete multi-month/historical database on modal open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let isCancelled = false;
+    const fetchFullDataset = async () => {
+      setIsLoadingFullData(true);
+      try {
+        const res = await fetch('/api/export?format=json');
+        if (res.ok) {
+          const fullJson = await res.json();
+          if (!isCancelled && fullJson && typeof fullJson === 'object') {
+            // Also merge with client-side notes and tasks if present
+            const localNotes = localStorageService.getNotes();
+            const localTasks = localStorageService.getTasks();
+
+            const combinedTasks = (fullJson.tasks && fullJson.tasks.length > 0)
+              ? fullJson.tasks
+              : localTasks;
+
+            const combinedNotes = (fullJson.notes && fullJson.notes.length > 0)
+              ? fullJson.notes
+              : localNotes;
+
+            setActiveExportData({
+              ...exportData,
+              ...fullJson,
+              tasks: combinedTasks,
+              notes: combinedNotes,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Could not fetch full dataset for export, falling back to in-memory state:', err);
+      } finally {
+        if (!isCancelled) setIsLoadingFullData(false);
+      }
+    };
+
+    fetchFullDataset();
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, exportData]);
 
   if (!isOpen) return null;
 
@@ -80,33 +129,33 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
   const getRecordCount = (tbl: SupportedTableName): number => {
     switch (tbl) {
       case 'affirmations':
-        return exportData.affirmations?.length || 0;
+        return activeExportData.affirmations?.length || 0;
       case 'daily_journal':
-        return exportData.daily_journal?.length || 0;
+        return activeExportData.daily_journal?.length || 0;
       case 'goals':
-        return exportData.goals?.length || 0;
+        return activeExportData.goals?.length || 0;
       case 'habit_categories':
       case 'categories':
-        return (exportData.habit_categories || exportData.categories)?.length || 0;
+        return (activeExportData.habit_categories || activeExportData.categories)?.length || 0;
       case 'habit_entries':
-        return exportData.habit_entries?.length || 0;
+        return activeExportData.habit_entries?.length || 0;
       case 'habits':
-        return exportData.habits?.length || 0;
+        return activeExportData.habits?.length || 0;
       case 'mood_tracker':
-        return exportData.mood_tracker?.length || 0;
+        return activeExportData.mood_tracker?.length || 0;
       case 'notes':
-        return exportData.notes?.length || 0;
+        return activeExportData.notes?.length || 0;
       case 'tasks':
-        return exportData.tasks?.length || 0;
+        return activeExportData.tasks?.length || 0;
       case 'reflections':
       case 'monthly_reflections':
-        return exportData.reflections?.length || 0;
+        return activeExportData.reflections?.length || 0;
       case 'settings':
-        return exportData.settings ? Object.keys(exportData.settings).length : 0;
+        return activeExportData.settings ? Object.keys(activeExportData.settings).length : 0;
       case 'weekly_plans':
-        return exportData.weekly_plans?.length || 0;
+        return activeExportData.weekly_plans?.length || 0;
       case 'weekly_reviews':
-        return exportData.weekly_reviews?.length || 0;
+        return activeExportData.weekly_reviews?.length || 0;
       default:
         return 0;
     }
@@ -145,11 +194,29 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
       const dateStr = new Date().toISOString().split('T')[0];
       const filename = `vignesh_habits_relational_${dateStr}.xlsx`;
 
-      downloadExcelWorkbook(exportData, filename, {
+      downloadExcelWorkbook(activeExportData, filename, {
         selectedTables: activeTables,
       });
 
       setExportedFilename(filename);
+
+      // Record verified backup telemetry to backend
+      api.recordBackupStats({
+        format: 'xlsx',
+        tasks_count: activeExportData.tasks?.length || 0,
+        tasks_restored: 0,
+        journal_count: activeExportData.daily_journal?.length || 0,
+        journal_restored: 0,
+        notes_count: activeExportData.notes?.length || 0,
+        notes_restored: 0,
+        total_records: selectedRecordsCount,
+        failed_records: 0,
+        success: true,
+        message: `Exported ${selectedRecordsCount} records to ${filename}`,
+      }).catch((err) => {
+        console.warn('Could not record backup stats:', err);
+      });
+
       setTimeout(() => {
         setIsExporting(false);
       }, 800);
@@ -185,6 +252,10 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
         return <Calendar className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />;
       case 'weekly_reviews':
         return <BookOpen className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />;
+      case 'tasks':
+        return <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />;
+      case 'notes':
+        return <BookOpen className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />;
       default:
         return <TableProperties className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />;
     }

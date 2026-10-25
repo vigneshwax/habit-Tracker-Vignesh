@@ -9,7 +9,7 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx test/excel.test.ts && tsx test/googleSheets.test.ts && tsx test/tasksAndJournal.test.ts"
+    "test": "tsx test/excel.test.ts && tsx test/googleSheets.test.ts && tsx test/tasksAndJournal.test.ts && tsx test/importRestoration.test.ts && tsx test/syncTelemetry.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

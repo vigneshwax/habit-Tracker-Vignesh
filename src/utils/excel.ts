@@ -59,6 +59,7 @@ export const RELATIONAL_TABLES: Record<SupportedTableName, TableMeta> = {
     fields: [
       'id',
       'date',
+      'title',
       'content',
       'mood',
       'energy_level',
@@ -152,7 +153,7 @@ export const RELATIONAL_TABLES: Record<SupportedTableName, TableMeta> = {
     primaryKey: 'id',
     foreignKeys: 'none',
     description: 'Stores personal and executive tasks, assignments, priorities, and deadlines',
-    fields: ['id', 'date', 'time', 'title', 'description', 'category', 'priority', 'status', 'assigned_to', 'notes', 'follow_up_date', 'created_at', 'updated_at'],
+    fields: ['id', 'date', 'time', 'title', 'description', 'category', 'priority', 'status', 'assigned_to', 'notes', 'follow_up_date', 'completed', 'habit_id', 'created_at', 'updated_at'],
   },
   notes: {
     name: 'notes',
@@ -160,7 +161,7 @@ export const RELATIONAL_TABLES: Record<SupportedTableName, TableMeta> = {
     primaryKey: 'id',
     foreignKeys: 'none',
     description: 'Stores digital second brain notes, knowledge documents, checklists, and ideas',
-    fields: ['id', 'title', 'content', 'type', 'category', 'checklist', 'tags', 'pinned', 'favorite', 'color', 'created_at', 'updated_at'],
+    fields: ['id', 'title', 'content', 'type', 'category', 'checklist', 'tags', 'pinned', 'favorite', 'archived', 'color', 'created_at', 'updated_at'],
   },
   // Backward compatibility aliases
   categories: {
@@ -212,6 +213,9 @@ export interface ExcelImportSummary {
   reflectionsCount: number;
   categoriesCount: number;
   settingsCount: number;
+  tasksCount: number;
+  notesCount: number;
+  affirmationsCount: number;
   detectedSheets: string[];
   totalRows: number;
   validRowsCount: number;
@@ -475,6 +479,38 @@ export const POSTGRESQL_SCHEMA_DICTIONARY = [
   { table_name: 'weekly_reviews', column: 'next_focus', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Priority focus for upcoming week' },
   { table_name: 'weekly_reviews', column: 'created_at', data_type: 'TIMESTAMPTZ', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Creation timestamp' },
   { table_name: 'weekly_reviews', column: 'updated_at', data_type: 'TIMESTAMPTZ', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Last modified timestamp' },
+
+  // 12. tasks
+  { table_name: 'tasks', column: 'id', data_type: 'UUID', nullable: 'NO', primary_key: 'YES', foreign_key: 'none', description: 'Unique task identifier' },
+  { table_name: 'tasks', column: 'date', data_type: 'DATE', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Scheduled date (YYYY-MM-DD)' },
+  { table_name: 'tasks', column: 'time', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Target execution time (HH:MM)' },
+  { table_name: 'tasks', column: 'title', data_type: 'TEXT', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Task title or action item' },
+  { table_name: 'tasks', column: 'description', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Comprehensive task description (multiline)' },
+  { table_name: 'tasks', column: 'category', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Task category' },
+  { table_name: 'tasks', column: 'priority', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Priority level (High, Medium, Low)' },
+  { table_name: 'tasks', column: 'status', data_type: 'TEXT', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Status (Pending, In Progress, Completed, Deferred)' },
+  { table_name: 'tasks', column: 'assigned_to', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Assignee name' },
+  { table_name: 'tasks', column: 'notes', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Internal remarks or notes' },
+  { table_name: 'tasks', column: 'follow_up_date', data_type: 'DATE', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Follow-up date (YYYY-MM-DD)' },
+  { table_name: 'tasks', column: 'completed', data_type: 'BOOLEAN', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Task completion flag' },
+  { table_name: 'tasks', column: 'habit_id', data_type: 'UUID', nullable: 'YES', primary_key: 'NO', foreign_key: 'habits.id', description: 'Optional linked habit UUID' },
+  { table_name: 'tasks', column: 'created_at', data_type: 'TIMESTAMPTZ', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Creation timestamp' },
+  { table_name: 'tasks', column: 'updated_at', data_type: 'TIMESTAMPTZ', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Last modified timestamp' },
+
+  // 13. notes
+  { table_name: 'notes', column: 'id', data_type: 'UUID', nullable: 'NO', primary_key: 'YES', foreign_key: 'none', description: 'Unique note identifier' },
+  { table_name: 'notes', column: 'title', data_type: 'TEXT', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Note title' },
+  { table_name: 'notes', column: 'content', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Note markdown content (multiline/unicode)' },
+  { table_name: 'notes', column: 'type', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Note type (note, checklist)' },
+  { table_name: 'notes', column: 'category', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Folder or category' },
+  { table_name: 'notes', column: 'checklist', data_type: 'JSONB', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Checklist progress items' },
+  { table_name: 'notes', column: 'tags', data_type: 'ARRAY', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Tags and hashtags' },
+  { table_name: 'notes', column: 'pinned', data_type: 'BOOLEAN', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Pinned note flag' },
+  { table_name: 'notes', column: 'favorite', data_type: 'BOOLEAN', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Favorite flag' },
+  { table_name: 'notes', column: 'archived', data_type: 'BOOLEAN', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Archived flag' },
+  { table_name: 'notes', column: 'color', data_type: 'TEXT', nullable: 'YES', primary_key: 'NO', foreign_key: 'none', description: 'Accent color' },
+  { table_name: 'notes', column: 'created_at', data_type: 'TIMESTAMPTZ', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Creation timestamp' },
+  { table_name: 'notes', column: 'updated_at', data_type: 'TIMESTAMPTZ', nullable: 'NO', primary_key: 'NO', foreign_key: 'none', description: 'Last modified timestamp' },
 ];
 
 /**
@@ -482,7 +518,7 @@ export const POSTGRESQL_SCHEMA_DICTIONARY = [
  * strictly organized by the PostgreSQL database structure:
  * 1. README: System & backup overview, relationships, record counts
  * 2. DATABASE_SCHEMA: Full column-level dictionary (data types, nullability, constraints)
- * 3-13. 11 Individual relational table sheets
+ * 3-15. Individual relational table sheets
  */
 export function buildExcelWorkbook(data: FullExportData, options?: BuildExcelOptions): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
@@ -525,6 +561,8 @@ export function buildExcelWorkbook(data: FullExportData, options?: BuildExcelOpt
     'settings',
     'weekly_plans',
     'weekly_reviews',
+    'tasks',
+    'notes',
   ];
 
   const readmeRows: Array<{
@@ -553,6 +591,8 @@ export function buildExcelWorkbook(data: FullExportData, options?: BuildExcelOpt
       else if (tbl === 'settings') count = data.settings ? Object.keys(data.settings).length : 0;
       else if (tbl === 'weekly_plans') count = data.weekly_plans?.length || 0;
       else if (tbl === 'weekly_reviews') count = data.weekly_reviews?.length || 0;
+      else if (tbl === 'tasks') count = data.tasks?.length || 0;
+      else if (tbl === 'notes') count = data.notes?.length || 0;
 
       return {
         table_no: idx + 1,
@@ -607,12 +647,21 @@ export function buildExcelWorkbook(data: FullExportData, options?: BuildExcelOpt
   // 4. daily_journal Worksheet
   if (isIncluded('daily_journal')) {
     const headers = RELATIONAL_TABLES.daily_journal.fields;
-    const rows = (data.daily_journal || []).map((j) => ({
+    const rows = (data.daily_journal || []).map((j: any) => ({
       id: j.id || makeUuid(),
       date: normalizeExcelDate(j.date),
+      title: j.title || '',
       content: j.content || '',
       mood: j.mood || '',
       energy_level: j.energy_level ?? '',
+      productivity: j.productivity ?? '',
+      highlights: j.highlights || '',
+      gratitude: j.gratitude || '',
+      wins: j.wins || '',
+      challenges: j.challenges || '',
+      priorities: j.priorities || '',
+      tags: Array.isArray(j.tags) ? JSON.stringify(j.tags) : (j.tags || ''),
+      linked_notes: Array.isArray(j.linked_notes) ? JSON.stringify(j.linked_notes) : (j.linked_notes || ''),
       created_at: j.created_at || exportedAt,
       updated_at: j.updated_at || exportedAt,
     }));
@@ -765,6 +814,54 @@ export function buildExcelWorkbook(data: FullExportData, options?: BuildExcelOpt
     XLSX.utils.book_append_sheet(wb, createTableSheet(headers, rows), 'weekly_reviews');
   }
 
+  // 14. tasks Worksheet
+  if (isIncluded('tasks')) {
+    const headers = RELATIONAL_TABLES.tasks.fields;
+    const rows = (data.tasks || []).map((t: any) => ({
+      id: t.id || makeUuid(),
+      date: normalizeExcelDate(t.date || t.due_date),
+      time: t.time || '09:00',
+      title: t.title || t.name || '',
+      description: t.description || '',
+      category: t.category || 'general',
+      priority: t.priority || 'Medium',
+      status: t.status || (t.completed ? 'Completed' : 'Pending'),
+      assigned_to: t.assigned_to || t.assignedTo || 'Vignesh',
+      notes: t.notes || '',
+      follow_up_date: normalizeExcelDate(t.follow_up_date || t.followUpDate),
+      completed: t.completed !== undefined ? Boolean(t.completed) : (String(t.status).toLowerCase() === 'completed'),
+      habit_id: t.habit_id || '',
+      created_at: t.created_at || t.createdAt || exportedAt,
+      updated_at: t.updated_at || t.updatedAt || exportedAt,
+    }));
+    XLSX.utils.book_append_sheet(wb, createTableSheet(headers, rows), 'tasks');
+  }
+
+  // 15. notes Worksheet
+  if (isIncluded('notes')) {
+    const headers = RELATIONAL_TABLES.notes.fields;
+    const rows = (data.notes || []).map((n: any) => ({
+      id: n.id || makeUuid(),
+      title: n.title || '',
+      content: n.content || '',
+      type: n.type || 'note',
+      category: n.category || 'Daily Journal',
+      checklist: Array.isArray(n.checklist || n.checklistItems)
+        ? JSON.stringify(n.checklist || n.checklistItems)
+        : (typeof (n.checklist || n.checklistItems) === 'object' && (n.checklist || n.checklistItems) !== null
+          ? JSON.stringify(n.checklist || n.checklistItems)
+          : String(n.checklist || n.checklistItems || '')),
+      tags: Array.isArray(n.tags) ? JSON.stringify(n.tags) : (n.tags || ''),
+      pinned: Boolean(n.pinned),
+      favorite: Boolean(n.favorite),
+      archived: Boolean(n.archived),
+      color: n.color || '',
+      created_at: n.created_at || n.createdAt || exportedAt,
+      updated_at: n.updated_at || n.updatedAt || exportedAt,
+    }));
+    XLSX.utils.book_append_sheet(wb, createTableSheet(headers, rows), 'notes');
+  }
+
   return wb;
 }
 
@@ -907,6 +1004,40 @@ export function downloadExcelTemplate(): void {
         updated_at: new Date().toISOString(),
       },
     ],
+    tasks: [
+      {
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        title: 'Complete Monthly Financial Review',
+        name: 'Complete Monthly Financial Review',
+        description: 'Audit monthly expenses and allocate investment budget',
+        category: 'finance',
+        priority: 'High',
+        status: 'Pending',
+        date: new Date().toISOString().split('T')[0],
+        time: '14:00',
+        assigned_to: 'Vignesh',
+        notes: 'Check spreadsheet figures',
+        completed: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    notes: [
+      {
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        title: 'Project Roadmap & Second Brain Notes',
+        content: '# Project Roadmap 2026\n\n- [x] Excel relational import/export engine\n- [ ] Deep habits integration\n\nDaily discipline compounds: 🚀',
+        category: 'Personal',
+        type: 'note',
+        tags: ['#roadmap', '#productivity'],
+        pinned: true,
+        favorite: true,
+        archived: false,
+        color: '#10B981',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ],
     settings: {
       theme: 'light',
       week_start: 'sunday',
@@ -929,31 +1060,41 @@ function resolveSheetName(sheetNames: string[], target: SupportedTableName): str
     if (clean === targetClean) return name;
   }
 
-  // Legacy fallback mappings
+  // Legacy fallback mappings (avoid collisions between notes and daily_journal)
   const legacyMap: Record<SupportedTableName, string[]> = {
-    affirmations: ['affirmation', 'quotes', 'motivation', 'visual_affirmations'],
-    daily_journal: ['journal', 'microjournal', 'journalentries', 'notes'],
-    goals: ['goal', 'targets', 'vision', 'milestones'],
-    habit_categories: ['categories', 'category', 'habitcategories', 'tags'],
-    habit_entries: ['entries', 'checkins', 'habitentry', 'logs', 'completion', 'habitentries'],
-    habits: ['habit', 'habitslist', 'allhabits'],
-    mood_tracker: ['mood', 'moods', 'moodlog', 'moodhistory'],
-    notes: ['note', 'noteslist', 'knowledge_notes', 'obsidian', 'obsidiannotes'],
-    reflections: ['monthly_reflections', 'reflections', 'reflection', 'retrospective'],
-    settings: ['setting', 'preferences', 'config'],
-    tasks: ['task', 'taskslist', 'todos', 'todo', 'kanban_tasks'],
-    weekly_plans: ['plans', 'weeklyplan', 'plan'],
-    weekly_reviews: ['reviews', 'weeklyreview', 'review'],
-    categories: ['category', 'habitcategories', 'tags'],
-    monthly_reflections: ['reflections', 'reflection', 'retrospective'],
+    affirmations: ['affirmations', 'affirmation', 'quotes', 'motivation', 'visual_affirmations'],
+    daily_journal: ['daily_journal', 'dailyjournal', 'journal', 'microjournal', 'journalentries', 'daily_journal_entries'],
+    goals: ['goals', 'goal', 'targets', 'vision', 'milestones'],
+    habit_categories: ['habit_categories', 'categories', 'category', 'habitcategories', 'tags'],
+    habit_entries: ['habit_entries', 'entries', 'checkins', 'habitentry', 'logs', 'completion', 'habitentries'],
+    habits: ['habits', 'habit', 'habitslist', 'allhabits'],
+    mood_tracker: ['mood_tracker', 'mood', 'moods', 'moodlog', 'moodhistory'],
+    notes: ['notes', 'note', 'noteslist', 'knowledge_notes', 'obsidian', 'obsidiannotes', 'keep_notes', 'keepnotes', 'second_brain'],
+    reflections: ['reflections', 'monthly_reflections', 'reflection', 'retrospective', 'monthlyreflections'],
+    settings: ['settings', 'setting', 'preferences', 'config'],
+    tasks: ['tasks', 'task', 'taskslist', 'todos', 'todo', 'kanban_tasks', 'hrtasks', 'hr_tasks'],
+    weekly_plans: ['weekly_plans', 'plans', 'weeklyplan', 'plan'],
+    weekly_reviews: ['weekly_reviews', 'reviews', 'weeklyreview', 'review'],
+    categories: ['categories', 'habit_categories', 'category', 'habitcategories', 'tags'],
+    monthly_reflections: ['monthly_reflections', 'reflections', 'reflection', 'retrospective', 'monthlyreflections'],
   };
 
   const aliases = legacyMap[target] || [];
+  // 1. Exact alias match first
   for (const alias of aliases) {
     const aliasClean = alias.toLowerCase().replace(/[^a-z0-9]/g, '');
     for (const name of sheetNames) {
       const clean = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (clean === aliasClean || clean.includes(aliasClean)) return name;
+      if (clean === aliasClean) return name;
+    }
+  }
+
+  // 2. Substring match fallback
+  for (const alias of aliases) {
+    const aliasClean = alias.toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const name of sheetNames) {
+      const clean = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (clean.includes(aliasClean)) return name;
     }
   }
 
@@ -1026,6 +1167,9 @@ export async function parseExcelFile(
     reflectionsCount: 0,
     categoriesCount: 0,
     settingsCount: 0,
+    tasksCount: 0,
+    notesCount: 0,
+    affirmationsCount: 0,
     detectedSheets: wb.SheetNames,
     totalRows: 0,
     validRowsCount: 0,
@@ -1040,6 +1184,9 @@ export async function parseExcelFile(
       reflections: [],
       habit_categories: [],
       settings: {},
+      tasks: [],
+      notes: [],
+      affirmations: [],
     },
     warnings: [],
     errors: [],
@@ -1081,6 +1228,9 @@ export async function parseExcelFile(
     weekly_reviews: new Set<string>(),
     monthly_reflections: new Set<string>(),
     settings: new Set<string>(),
+    tasks: new Set<string>(),
+    notes: new Set<string>(),
+    affirmations: new Set<string>(),
   };
 
   // 1. Parse categories
@@ -1535,17 +1685,16 @@ export async function parseExcelFile(
         return;
       }
 
-      const content = String(data.content || data.notes || data.note || data.text || '').trim();
-      if (!content) {
+      const content = String(data.content || data.notes || data.note || data.text || '');
+      const hasAnyField = content.trim() || data.title || data.highlights || data.gratitude || data.wins || data.priorities || data.challenges;
+      if (!hasAnyField) {
         addIssue({
           sheet: journalSheetName,
           rowNumber: rowNum,
           column: 'content',
-          type: 'error',
-          message: 'Daily journal content is empty',
+          type: 'warning',
+          message: 'Daily journal entry has no text content or prompts logged',
         });
-        errCount++;
-        return;
       }
 
       const id = String(data.id || '').trim() || makeUuid();
@@ -1563,12 +1712,61 @@ export async function parseExcelFile(
       }
       seenPrimaryKeys.daily_journal.add(id);
 
+      // Parse tags
+      let tags: string[] = [];
+      const rawTags = data.tags || data.tag;
+      if (typeof rawTags === 'string' && rawTags.trim()) {
+        try {
+          if (rawTags.trim().startsWith('[') && rawTags.trim().endsWith(']')) {
+            tags = JSON.parse(rawTags);
+          } else {
+            tags = rawTags.split(/[,;|]/).map((t: string) => t.trim()).filter(Boolean);
+          }
+        } catch {
+          tags = rawTags.split(/[,;|]/).map((t: string) => t.trim()).filter(Boolean);
+        }
+      } else if (Array.isArray(rawTags)) {
+        tags = rawTags;
+      }
+
+      // Parse linked notes
+      let linkedNotes: string[] = [];
+      const rawLinks = data.linked_notes || data.linkednotes;
+      if (typeof rawLinks === 'string' && rawLinks.trim()) {
+        try {
+          if (rawLinks.trim().startsWith('[') && rawLinks.trim().endsWith(']')) {
+            linkedNotes = JSON.parse(rawLinks);
+          } else {
+            linkedNotes = rawLinks.split(/[,;|]/).map((l: string) => l.trim()).filter(Boolean);
+          }
+        } catch {
+          linkedNotes = rawLinks.split(/[,;|]/).map((l: string) => l.trim()).filter(Boolean);
+        }
+      } else if (Array.isArray(rawLinks)) {
+        linkedNotes = rawLinks;
+      }
+
+      let productivity: number | undefined = undefined;
+      if (data.productivity !== undefined && data.productivity !== '') {
+        const prodNum = Number(data.productivity);
+        if (!isNaN(prodNum)) productivity = prodNum;
+      }
+
       summary.parsedData.daily_journal.push({
         id,
         date: dateStr,
+        title: data.title ? String(data.title).trim() : undefined,
         content,
         mood: data.mood ? (String(data.mood).toLowerCase() as any) : undefined,
         energy_level: data.energy_level || data.energylevel ? Number(data.energy_level || data.energylevel) : undefined,
+        productivity,
+        highlights: data.highlights ? String(data.highlights) : undefined,
+        gratitude: data.gratitude ? String(data.gratitude) : undefined,
+        wins: data.wins ? String(data.wins) : undefined,
+        challenges: data.challenges ? String(data.challenges) : undefined,
+        priorities: data.priorities ? String(data.priorities) : undefined,
+        tags,
+        linked_notes: linkedNotes,
         created_at: data.created_at || data.createdat ? String(data.created_at || data.createdat) : new Date().toISOString(),
         updated_at: data.updated_at || data.updatedat ? String(data.updated_at || data.updatedat) : undefined,
       });
@@ -1813,6 +2011,270 @@ export async function parseExcelFile(
       newRows: validCount,
       updatedRows: 0,
       errors: 0,
+      warnings: 0,
+    };
+  }
+
+  // 11. Parse affirmations
+  const affirmationsSheetName = resolveSheetName(wb.SheetNames, 'affirmations');
+  if (affirmationsSheetName) {
+    const { rows } = getSheetRowsWithHeaders(wb.Sheets[affirmationsSheetName]);
+    let validCount = 0;
+    let errCount = 0;
+
+    rows.forEach(({ rowNum, data }) => {
+      const quote = String(data.quote || data.affirmation || data.text || '').trim();
+      if (!quote) {
+        addIssue({
+          sheet: affirmationsSheetName,
+          rowNumber: rowNum,
+          column: 'quote',
+          type: 'error',
+          message: 'Affirmation quote is required',
+        });
+        errCount++;
+        return;
+      }
+
+      const id = String(data.id || '').trim() || makeUuid();
+      if (seenPrimaryKeys.affirmations.has(id)) {
+        addIssue({
+          sheet: affirmationsSheetName,
+          rowNumber: rowNum,
+          column: 'id',
+          type: 'error',
+          message: `Duplicate primary key 'id' (${id})`,
+          recordId: id,
+        });
+        errCount++;
+        return;
+      }
+      seenPrimaryKeys.affirmations.add(id);
+
+      summary.parsedData.affirmations?.push({
+        id,
+        quote,
+        author: data.author ? String(data.author).trim() : undefined,
+        image_url: data.image_url || data.imageurl ? String(data.image_url || data.imageurl).trim() : undefined,
+        active: data.active !== undefined ? normalizeExcelBool(data.active) : true,
+        created_at: data.created_at || data.createdat ? String(data.created_at || data.createdat) : new Date().toISOString(),
+        updated_at: data.updated_at || data.updatedat ? String(data.updated_at || data.updatedat) : undefined,
+      });
+      validCount++;
+    });
+
+    summary.affirmationsCount = validCount;
+    summary.sheetStats.affirmations = {
+      tableName: 'affirmations',
+      displayName: 'Affirmations',
+      totalRows: rows.length,
+      validRows: validCount,
+      newRows: validCount,
+      updatedRows: 0,
+      errors: errCount,
+      warnings: 0,
+    };
+  }
+
+  // 12. Parse tasks
+  const tasksSheetName = resolveSheetName(wb.SheetNames, 'tasks');
+  if (tasksSheetName) {
+    const { rows } = getSheetRowsWithHeaders(wb.Sheets[tasksSheetName]);
+    let validCount = 0;
+    let errCount = 0;
+
+    rows.forEach(({ rowNum, data }) => {
+      const title = String(data.title || data.name || data.task || '').trim();
+      if (!title) {
+        addIssue({
+          sheet: tasksSheetName,
+          rowNumber: rowNum,
+          column: 'title',
+          type: 'error',
+          message: 'Task title is required',
+        });
+        errCount++;
+        return;
+      }
+
+      const id = String(data.id || data.task_id || data.taskid || '').trim() || makeUuid();
+      if (seenPrimaryKeys.tasks.has(id)) {
+        addIssue({
+          sheet: tasksSheetName,
+          rowNumber: rowNum,
+          column: 'id',
+          type: 'error',
+          message: `Duplicate primary key 'id' (${id})`,
+          recordId: id,
+        });
+        errCount++;
+        return;
+      }
+      seenPrimaryKeys.tasks.add(id);
+
+      const rawDueDate = data.date || data.due_date || data.duedate || data.follow_up_date;
+      const dueDate = normalizeExcelDate(rawDueDate);
+
+      const habitId = String(data.habit_id || data.habitid || '').trim() || undefined;
+      if (habitId && knownHabitIds.size > 0 && !knownHabitIds.has(habitId)) {
+        addIssue({
+          sheet: tasksSheetName,
+          rowNumber: rowNum,
+          column: 'habit_id',
+          type: 'warning',
+          message: `Foreign key 'habit_id' (${habitId}) not found in habits table.`,
+          recordId: id,
+        });
+      }
+
+      const isCompleted = data.completed !== undefined
+        ? normalizeExcelBool(data.completed)
+        : (String(data.status || '').toLowerCase() === 'completed');
+
+      const rawPriority = String(data.priority || 'Medium').trim();
+      const priority = rawPriority ? (rawPriority.charAt(0).toUpperCase() + rawPriority.slice(1)) : 'Medium';
+
+      const rawStatus = String(data.status || (isCompleted ? 'Completed' : 'Pending')).trim();
+
+      summary.parsedData.tasks?.push({
+        id,
+        title,
+        description: data.description !== undefined ? String(data.description) : undefined,
+        date: dueDate || undefined,
+        due_date: dueDate || undefined,
+        time: data.time ? String(data.time).trim() : '09:00',
+        category: data.category ? String(data.category).trim() : 'general',
+        priority,
+        status: rawStatus,
+        assigned_to: data.assigned_to || data.assignedto || data.assignedTo || 'Vignesh',
+        notes: data.notes || data.note ? String(data.notes || data.note) : '',
+        follow_up_date: normalizeExcelDate(data.follow_up_date || data.followupdate) || undefined,
+        completed: isCompleted,
+        habit_id: habitId,
+        created_at: data.created_at || data.createdat ? String(data.created_at || data.createdat) : new Date().toISOString(),
+        updated_at: data.updated_at || data.updatedat ? String(data.updated_at || data.updatedat) : undefined,
+      });
+      validCount++;
+    });
+
+    summary.tasksCount = validCount;
+    summary.sheetStats.tasks = {
+      tableName: 'tasks',
+      displayName: 'Tasks',
+      totalRows: rows.length,
+      validRows: validCount,
+      newRows: validCount,
+      updatedRows: 0,
+      errors: errCount,
+      warnings: 0,
+    };
+  }
+
+  // 13. Parse notes
+  const notesSheetName = resolveSheetName(wb.SheetNames, 'notes');
+  if (notesSheetName) {
+    const { rows } = getSheetRowsWithHeaders(wb.Sheets[notesSheetName]);
+    let validCount = 0;
+    let errCount = 0;
+
+    rows.forEach(({ rowNum, data }) => {
+      const title = String(data.title || data.name || '').trim();
+      const content = data.content !== undefined ? String(data.content) : '';
+
+      if (!title && !content) {
+        addIssue({
+          sheet: notesSheetName,
+          rowNumber: rowNum,
+          column: 'title',
+          type: 'error',
+          message: 'Note must have either a title or content',
+        });
+        errCount++;
+        return;
+      }
+
+      const id = String(data.id || '').trim() || makeUuid();
+      if (seenPrimaryKeys.notes.has(id)) {
+        addIssue({
+          sheet: notesSheetName,
+          rowNumber: rowNum,
+          column: 'id',
+          type: 'error',
+          message: `Duplicate primary key 'id' (${id})`,
+          recordId: id,
+        });
+        errCount++;
+        return;
+      }
+      seenPrimaryKeys.notes.add(id);
+
+      let checklist: any = undefined;
+      const rawChecklist = data.checklist || data.checklist_items || data.items;
+      if (rawChecklist) {
+        if (typeof rawChecklist === 'string') {
+          try {
+            checklist = JSON.parse(rawChecklist);
+          } catch {
+            checklist = rawChecklist.split('\n').filter(Boolean).map((line, idx) => ({
+              id: `${id}-chk-${idx}`,
+              text: line.replace(/^[-*\[\s\]x]+/, '').trim(),
+              completed: /\[x\]/i.test(line),
+            }));
+          }
+        } else if (Array.isArray(rawChecklist)) {
+          checklist = rawChecklist;
+        }
+      }
+
+      let tags: string[] = [];
+      const rawTags = data.tags || data.tag;
+      if (rawTags) {
+        if (typeof rawTags === 'string') {
+          try {
+            if (rawTags.startsWith('[') && rawTags.endsWith(']')) {
+              tags = JSON.parse(rawTags);
+            } else {
+              tags = rawTags.split(/[,;#]/).map((t) => t.trim()).filter(Boolean);
+            }
+          } catch {
+            tags = rawTags.split(/[,;#]/).map((t) => t.trim()).filter(Boolean);
+          }
+        } else if (Array.isArray(rawTags)) {
+          tags = rawTags;
+        }
+      }
+
+      const pinned = normalizeExcelBool(data.pinned);
+      const favorite = normalizeExcelBool(data.favorite);
+      const archived = normalizeExcelBool(data.archived);
+
+      summary.parsedData.notes?.push({
+        id,
+        title: title || 'Untitled Note',
+        content,
+        type: data.type ? String(data.type).trim() : (checklist && checklist.length > 0 ? 'checklist' : 'note'),
+        category: data.category ? String(data.category).trim() : 'General',
+        checklist,
+        tags,
+        pinned,
+        favorite,
+        archived,
+        color: data.color ? String(data.color).trim() : 'default',
+        created_at: data.created_at || data.createdat ? String(data.created_at || data.createdat) : new Date().toISOString(),
+        updated_at: data.updated_at || data.updatedat ? String(data.updated_at || data.updatedat) : undefined,
+      });
+      validCount++;
+    });
+
+    summary.notesCount = validCount;
+    summary.sheetStats.notes = {
+      tableName: 'notes',
+      displayName: 'Notes & Second Brain',
+      totalRows: rows.length,
+      validRows: validCount,
+      newRows: validCount,
+      updatedRows: 0,
+      errors: errCount,
       warnings: 0,
     };
   }
